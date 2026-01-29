@@ -29,6 +29,7 @@ class VKTeamsSession:
     """Сессия пользователя VK Teams"""
     aimsid: str
     email: str
+    fetch_base_url: str = ""  # URL для fetchEvents
 
 
 # =========================
@@ -89,9 +90,49 @@ class VKTeamsClient:
     # ---------------------
 
     async def get_contact_list(self) -> list[dict]:
-        """Получить список всех чатов/контактов"""
-        results = await self._request("getContactList", {"lang": "ru"})
-        return results.get("contacts", [])
+        """Получить список всех чатов/контактов через fetchEvents"""
+
+        if not self.session.fetch_base_url:
+            logger.warning("No fetchBaseURL available")
+            return []
+
+        logger.debug(f"Fetching contacts via: {self.session.fetch_base_url[:80]}...")
+
+        headers = {
+            "Accept": "application/json",
+            "Origin": "https://myteam.mail.ru",
+            "Referer": "https://myteam.mail.ru/",
+        }
+
+        async with aiohttp.ClientSession() as http:
+            async with http.get(self.session.fetch_base_url, headers=headers) as response:
+                logger.debug(f"fetchEvents status: {response.status}")
+
+                if response.content_type != "application/json":
+                    text = await response.text()
+                    logger.error(f"fetchEvents non-JSON: {text[:200]}")
+                    return []
+
+                data = await response.json()
+
+        # Извлекаем контакты из событий buddylist
+        contacts = []
+        events = data.get("response", {}).get("data", {}).get("events", [])
+
+        for event in events:
+            if event.get("type") == "buddylist":
+                groups = event.get("data", {}).get("groups", [])
+                for group in groups:
+                    buddies = group.get("buddies", [])
+                    for buddy in buddies:
+                        contacts.append({
+                            "sn": buddy.get("aimId", ""),
+                            "name": buddy.get("friendly", buddy.get("aimId", "")),
+                            "type": buddy.get("userType", ""),
+                        })
+
+        logger.info(f"Found {len(contacts)} contacts via fetchEvents")
+        return contacts
 
     async def get_chat_info(self, sn: str) -> dict:
         """Получить информацию о чате"""
@@ -295,8 +336,8 @@ class VKTeamsAuth:
         token_a = data["response"]["data"]["token"]["a"]
         logger.info(f"Got token_a: {token_a[:20] if token_a else 'None'}...")
 
-        aimsid = await self._start_session(email, token_a)
-        return VKTeamsSession(aimsid=aimsid, email=email)
+        aimsid, fetch_base_url = await self._start_session(email, token_a)
+        return VKTeamsSession(aimsid=aimsid, email=email, fetch_base_url=fetch_base_url)
 
     async def _start_session(self, email: str, token_a: str) -> str:
         """POST /wim/aim/startSession"""
@@ -390,10 +431,13 @@ class VKTeamsAuth:
             logger.error(f"Start session failed: {data}")
             raise Exception(f"Ошибка создания сессии: {error_text}")
 
-        aimsid = data["response"]["data"]["aimsid"]
+        response_data = data["response"]["data"]
+        aimsid = response_data["aimsid"]
+        fetch_base_url = response_data.get("fetchBaseURL", "")
         logger.info(f"Got aimsid: {aimsid[:30] if aimsid else 'None'}...")
+        logger.info(f"Got fetchBaseURL: {fetch_base_url[:50] if fetch_base_url else 'None'}...")
 
-        return aimsid
+        return aimsid, fetch_base_url
 
     @staticmethod
     def create_session_from_aimsid(aimsid: str) -> VKTeamsSession:
