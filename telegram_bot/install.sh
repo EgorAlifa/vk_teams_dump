@@ -25,29 +25,128 @@ cd "$SCRIPT_DIR"
 
 echo -e "${YELLOW}📁 Рабочая директория: $SCRIPT_DIR${NC}\n"
 
+# Функция для проверки sudo
+check_sudo() {
+    if command -v sudo &> /dev/null; then
+        echo "sudo"
+    else
+        echo ""
+    fi
+}
+
+SUDO=$(check_sudo)
+
+# Определяем пакетный менеджер
+detect_package_manager() {
+    if command -v apt-get &> /dev/null; then
+        echo "apt"
+    elif command -v dnf &> /dev/null; then
+        echo "dnf"
+    elif command -v yum &> /dev/null; then
+        echo "yum"
+    elif command -v pacman &> /dev/null; then
+        echo "pacman"
+    elif command -v brew &> /dev/null; then
+        echo "brew"
+    else
+        echo ""
+    fi
+}
+
+PKG_MANAGER=$(detect_package_manager)
+
+# Функция установки пакета
+install_package() {
+    local package=$1
+    echo -e "${YELLOW}📦 Устанавливаю $package...${NC}"
+
+    case $PKG_MANAGER in
+        apt)
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq $package
+            ;;
+        dnf)
+            $SUDO dnf install -y -q $package
+            ;;
+        yum)
+            $SUDO yum install -y -q $package
+            ;;
+        pacman)
+            $SUDO pacman -S --noconfirm $package
+            ;;
+        brew)
+            brew install $package
+            ;;
+        *)
+            echo -e "${RED}Не удалось определить пакетный менеджер${NC}"
+            echo "Установи вручную: $package"
+            exit 1
+            ;;
+    esac
+}
+
 #############################################
-# 1. Проверка Python
+# 1. Проверка и установка Python
 #############################################
 echo -e "${BLUE}[1/5] Проверяю Python...${NC}"
 
-if command -v python3 &> /dev/null; then
-    PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
-    echo -e "${GREEN}✓ Python $PYTHON_VERSION найден${NC}"
-else
-    echo -e "${RED}✗ Python3 не найден!${NC}"
-    echo ""
-    echo "Установи Python:"
-    echo "  Ubuntu/Debian: sudo apt install python3 python3-pip python3-venv"
-    echo "  macOS:         brew install python3"
-    echo "  Windows:       https://python.org/downloads/"
-    exit 1
+if ! command -v python3 &> /dev/null; then
+    echo -e "${YELLOW}Python3 не найден, устанавливаю...${NC}"
+    case $PKG_MANAGER in
+        apt) install_package "python3" ;;
+        dnf|yum) install_package "python3" ;;
+        pacman) install_package "python" ;;
+        brew) install_package "python3" ;;
+    esac
 fi
 
-#############################################
-# 2. Создание виртуального окружения
-#############################################
-echo -e "\n${BLUE}[2/5] Создаю виртуальное окружение...${NC}"
+PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
+PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
+PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
+echo -e "${GREEN}✓ Python $PYTHON_VERSION найден${NC}"
 
+#############################################
+# 2. Проверка и установка pip
+#############################################
+echo -e "\n${BLUE}[2/5] Проверяю pip...${NC}"
+
+if ! python3 -m pip --version &> /dev/null; then
+    echo -e "${YELLOW}pip не найден, устанавливаю...${NC}"
+    case $PKG_MANAGER in
+        apt) install_package "python3-pip" ;;
+        dnf|yum) install_package "python3-pip" ;;
+        pacman) install_package "python-pip" ;;
+        brew) python3 -m ensurepip --upgrade ;;
+    esac
+fi
+echo -e "${GREEN}✓ pip установлен${NC}"
+
+#############################################
+# 3. Проверка и установка venv
+#############################################
+echo -e "\n${BLUE}[3/5] Проверяю venv и создаю окружение...${NC}"
+
+# Проверяем, работает ли venv
+if ! python3 -m venv --help &> /dev/null 2>&1; then
+    echo -e "${YELLOW}venv не найден, устанавливаю...${NC}"
+    case $PKG_MANAGER in
+        apt)
+            # Определяем версию Python для правильного пакета
+            install_package "python${PYTHON_MAJOR}.${PYTHON_MINOR}-venv"
+            ;;
+        dnf|yum)
+            install_package "python3-venv"
+            ;;
+        pacman)
+            echo "venv включён в python на Arch"
+            ;;
+        brew)
+            echo "venv включён в python на macOS"
+            ;;
+    esac
+fi
+
+# Создаём виртуальное окружение
 if [ ! -d "venv" ]; then
     python3 -m venv venv
     echo -e "${GREEN}✓ Виртуальное окружение создано${NC}"
@@ -59,19 +158,19 @@ fi
 source venv/bin/activate
 
 #############################################
-# 3. Установка зависимостей
+# 4. Установка зависимостей Python
 #############################################
-echo -e "\n${BLUE}[3/5] Устанавливаю зависимости...${NC}"
+echo -e "\n${BLUE}[4/5] Устанавливаю зависимости Python...${NC}"
 
-pip install --upgrade pip -q
-pip install -r requirements.txt -q
+pip install --upgrade pip -q 2>/dev/null
+pip install -r requirements.txt -q 2>/dev/null
 
 echo -e "${GREEN}✓ Зависимости установлены${NC}"
 
 #############################################
-# 4. Настройка токена
+# 5. Настройка токена
 #############################################
-echo -e "\n${BLUE}[4/5] Настройка токена Telegram бота...${NC}"
+echo -e "\n${BLUE}[5/5] Настройка токена Telegram бота...${NC}"
 
 if [ -f ".env" ]; then
     echo -e "${YELLOW}• Файл .env уже существует${NC}"
@@ -105,10 +204,8 @@ if [ ! -f ".env" ]; then
 fi
 
 #############################################
-# 5. Создание скрипта запуска
+# Создание скрипта запуска
 #############################################
-echo -e "\n${BLUE}[5/5] Создаю скрипт запуска...${NC}"
-
 cat > run.sh << 'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -118,8 +215,6 @@ python bot.py
 EOF
 
 chmod +x run.sh
-
-echo -e "${GREEN}✓ Скрипт run.sh создан${NC}"
 
 #############################################
 # Готово!
