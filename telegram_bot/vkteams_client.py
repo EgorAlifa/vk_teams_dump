@@ -115,9 +115,14 @@ class VKTeamsClient:
 
                 data = await response.json()
 
+        # Логируем полный ответ для отладки
+        import json
+        logger.debug(f"fetchEvents full response: {json.dumps(data, ensure_ascii=False)[:2000]}")
+
         # Извлекаем контакты из событий buddylist
         contacts = []
         events = data.get("response", {}).get("data", {}).get("events", [])
+        logger.debug(f"Found {len(events)} events, types: {[e.get('type') for e in events]}")
 
         for event in events:
             if event.get("type") == "buddylist":
