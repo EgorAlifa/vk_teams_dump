@@ -62,8 +62,9 @@ install_package() {
 
     case $PKG_MANAGER in
         apt)
-            $SUDO apt-get update -qq
-            $SUDO apt-get install -y -qq $package
+            # Игнорируем ошибки от сторонних репозиториев (например GitLab)
+            $SUDO apt-get update -qq 2>/dev/null || true
+            $SUDO apt-get install -y -qq $package 2>/dev/null
             ;;
         dnf)
             $SUDO dnf install -y -q $package
@@ -80,9 +81,19 @@ install_package() {
         *)
             echo -e "${RED}Не удалось определить пакетный менеджер${NC}"
             echo "Установи вручную: $package"
-            exit 1
+            return 1
             ;;
     esac
+}
+
+# Установка pip через get-pip.py (fallback)
+install_pip_fallback() {
+    echo -e "${YELLOW}📦 Устанавливаю pip через get-pip.py...${NC}"
+    curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+    python3 /tmp/get-pip.py --user --quiet
+    rm -f /tmp/get-pip.py
+    # Добавляем локальный pip в PATH
+    export PATH="$HOME/.local/bin:$PATH"
 }
 
 #############################################
@@ -112,14 +123,30 @@ echo -e "\n${BLUE}[2/5] Проверяю pip...${NC}"
 
 if ! python3 -m pip --version &> /dev/null; then
     echo -e "${YELLOW}pip не найден, устанавливаю...${NC}"
+
+    # Пробуем через пакетный менеджер
     case $PKG_MANAGER in
         apt) install_package "python3-pip" ;;
         dnf|yum) install_package "python3-pip" ;;
         pacman) install_package "python-pip" ;;
-        brew) python3 -m ensurepip --upgrade ;;
+        brew) python3 -m ensurepip --upgrade 2>/dev/null || true ;;
     esac
+
+    # Если всё ещё нет pip - используем fallback
+    if ! python3 -m pip --version &> /dev/null; then
+        echo -e "${YELLOW}Пакетный менеджер не смог установить pip, пробую альтернативный способ...${NC}"
+        install_pip_fallback
+    fi
 fi
-echo -e "${GREEN}✓ pip установлен${NC}"
+
+# Финальная проверка pip
+if python3 -m pip --version &> /dev/null; then
+    echo -e "${GREEN}✓ pip установлен${NC}"
+else
+    echo -e "${RED}✗ Не удалось установить pip${NC}"
+    echo "Попробуй установить вручную: curl https://bootstrap.pypa.io/get-pip.py | python3"
+    exit 1
+fi
 
 #############################################
 # 3. Проверка и установка venv
@@ -148,14 +175,29 @@ fi
 
 # Создаём виртуальное окружение
 if [ ! -d "venv" ]; then
-    python3 -m venv venv
-    echo -e "${GREEN}✓ Виртуальное окружение создано${NC}"
+    # Пробуем создать venv
+    if python3 -m venv venv 2>/dev/null; then
+        echo -e "${GREEN}✓ Виртуальное окружение создано${NC}"
+    else
+        # Fallback: создаём venv без pip (установим pip позже)
+        echo -e "${YELLOW}Пробую создать venv без ensurepip...${NC}"
+        python3 -m venv venv --without-pip
+        echo -e "${GREEN}✓ Виртуальное окружение создано (без pip)${NC}"
+    fi
 else
     echo -e "${YELLOW}• Виртуальное окружение уже существует${NC}"
 fi
 
 # Активируем venv
 source venv/bin/activate
+
+# Если pip нет в venv - устанавливаем
+if ! pip --version &> /dev/null 2>&1; then
+    echo -e "${YELLOW}Устанавливаю pip в виртуальное окружение...${NC}"
+    curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+    python /tmp/get-pip.py --quiet
+    rm -f /tmp/get-pip.py
+fi
 
 #############################################
 # 4. Установка зависимостей Python
