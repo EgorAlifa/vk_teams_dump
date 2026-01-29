@@ -199,20 +199,23 @@ fi
 # Активируем venv
 source venv/bin/activate
 
-# Если pip нет в venv - устанавливаем
-if ! pip --version &> /dev/null 2>&1; then
+# Используем python из venv явно
+VENV_PYTHON="$SCRIPT_DIR/venv/bin/python"
+
+# Если pip нет в venv - устанавливаем через get-pip.py
+if ! "$VENV_PYTHON" -m pip --version &> /dev/null 2>&1; then
     echo -e "${YELLOW}Устанавливаю pip в виртуальное окружение...${NC}"
     curl -sSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Не удалось скачать get-pip.py${NC}"
         exit 1
     fi
-    python /tmp/get-pip.py
+    "$VENV_PYTHON" /tmp/get-pip.py
     rm -f /tmp/get-pip.py
 fi
 
-# Проверяем что pip работает
-if ! pip --version &> /dev/null 2>&1; then
+# Проверяем что pip работает в venv
+if ! "$VENV_PYTHON" -m pip --version &> /dev/null 2>&1; then
     echo -e "${RED}✗ pip не установлен в виртуальное окружение${NC}"
     exit 1
 fi
@@ -224,10 +227,10 @@ echo -e "${GREEN}✓ pip в venv работает${NC}"
 echo -e "\n${BLUE}[4/5] Устанавливаю зависимости Python...${NC}"
 
 echo "Обновляю pip..."
-pip install --upgrade pip
+"$VENV_PYTHON" -m pip install --upgrade pip
 
 echo "Устанавливаю зависимости из requirements.txt..."
-pip install -r requirements.txt
+"$VENV_PYTHON" -m pip install -r requirements.txt
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}✗ Ошибка установки зависимостей${NC}"
