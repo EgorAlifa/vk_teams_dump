@@ -53,13 +53,19 @@ user_exporting: dict[int, bool] = {}  # Блокировка повторных 
 user_search_query: dict[int, str] = {}  # Поисковый запрос
 
 
-def is_birthday_chat(name: str) -> bool:
-    """Проверить, является ли чат 'днём рождения' (ДР или день рождения)"""
+def is_hidden_chat(name: str) -> bool:
+    """Проверить, является ли чат скрытым (ДР, свадьба и т.п.)"""
     import re
     name_lower = name.lower()
 
     # "день рождения" или "день рождение" (с опечаткой)
     if 'день рождени' in name_lower:
+        return True
+
+    # Свадьба, женился/женилась
+    if 'свадьб' in name_lower:  # свадьба, свадьбы, свадьбой...
+        return True
+    if 'женил' in name_lower:  # женился, женилась, женились...
         return True
 
     # Целое слово "др" - проверяем что перед и после нет кириллических букв
@@ -330,17 +336,41 @@ async def cmd_chats(message: Message, state: FSMContext):
             await status_msg.edit_text("📭 У тебя нет чатов")
             return
 
+        # Дозапрашиваем имена для чатов без названия (параллельно, батчами по 10)
+        unnamed_chats = [c for c in contacts if not c.get("name") and not c.get("friendly")]
+        if unnamed_chats:
+            try:
+                await status_msg.edit_text(f"⏳ Загружаю имена чатов ({len(unnamed_chats)} шт.)...")
+            except Exception:
+                pass
+
+            async def fetch_name(chat: dict) -> None:
+                try:
+                    info = await client.get_chat_info(chat["sn"])
+                    if info and info.get("name"):
+                        chat["name"] = info["name"]
+                    elif info and info.get("friendly"):
+                        chat["friendly"] = info["friendly"]
+                except Exception:
+                    pass
+
+            # Батчами по 10 чтобы не перегружать API
+            batch_size = 10
+            for i in range(0, len(unnamed_chats), batch_size):
+                batch = unnamed_chats[i:i + batch_size]
+                await asyncio.gather(*[fetch_name(c) for c in batch])
+
         # Разделяем на группы и личные чаты
         all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "")]
         all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "")]
 
         # Фильтруем скрытые (ДР, день рождения) из обеих категорий
-        hidden_groups = [c for c in all_groups if is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
-        hidden_private = [c for c in all_private if is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        hidden_groups = [c for c in all_groups if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        hidden_private = [c for c in all_private if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
         hidden = hidden_groups + hidden_private
 
-        groups = [c for c in all_groups if not is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
-        private = [c for c in all_private if not is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        groups = [c for c in all_groups if not is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        private = [c for c in all_private if not is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
 
         # Сохраняем для выбора (сначала группы)
         await state.update_data(contacts=contacts, groups=groups, private=private, hidden=hidden)
