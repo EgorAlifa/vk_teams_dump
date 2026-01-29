@@ -181,14 +181,12 @@ class VKTeamsClient:
 
         params = {
             "sn": sn,
+            "fromMsgId": from_msg_id or "-1",  # -1 = с последнего сообщения
             "count": count,
             "lang": "ru",
-            "mentions": {"resolve": True},
+            "mentions": {"resolve": False},
             "patchVersion": "1"
         }
-
-        if from_msg_id:
-            params["fromMsgId"] = from_msg_id
 
         return await self._request("getHistory", params)
 
