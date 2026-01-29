@@ -316,47 +316,19 @@ async def cmd_chats(message: Message, state: FSMContext):
         # Сохраняем для выбора (сначала группы)
         await state.update_data(contacts=contacts, groups=groups, private=private)
 
-        # Формируем клавиатуру — показываем только группы (первые 50)
-        builder = InlineKeyboardBuilder()
-
-        chats_to_show = groups[:50]  # Показываем только группы
-
-        for chat in chats_to_show:
-            sn = chat.get("sn", "")
-            name = chat.get("name") or chat.get("friendly") or sn
-            name = name[:35] + "…" if len(name) > 35 else name
-
-            builder.button(
-                text=f"👥 {name}",
-                callback_data=f"select:{sn}"
-            )
-
-        builder.adjust(1)  # По одной кнопке в ряд
-
-        builder.adjust(1)  # По одной кнопке в ряд
-
-        # Добавляем кнопки управления
-        builder.row(
-            InlineKeyboardButton(text="✅ Выбрать все группы", callback_data="select_all_groups"),
-        )
-        if private:
-            builder.row(
-                InlineKeyboardButton(text="👤 Показать личные чаты", callback_data="show_private"),
-            )
-        builder.row(
-            InlineKeyboardButton(text="📥 Экспортировать выбранные", callback_data="do_export"),
-        )
-
         # Инициализируем выбранные чаты
         user_selected_chats[message.from_user.id] = []
 
-        shown_text = f"(показано {len(chats_to_show)} из {len(groups)})" if len(groups) > 50 else ""
+        # Формируем клавиатуру с чекбоксами
+        keyboard = build_chats_keyboard(groups, [], show_private_btn=bool(private))
+
+        shown_text = f"(показано {min(50, len(groups))} из {len(groups)})" if len(groups) > 50 else ""
 
         await status_msg.edit_text(
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.) {shown_text}\n"
             f"👤 Личных переписок: {len(private)}\n\n"
-            f"Выбери чаты и нажми «Экспортировать»",
-            reply_markup=builder.as_markup(),
+            f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
 
@@ -364,6 +336,37 @@ async def cmd_chats(message: Message, state: FSMContext):
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
+
+
+def build_chats_keyboard(chats: list, selected: list, show_private_btn: bool = True) -> InlineKeyboardMarkup:
+    """Построить клавиатуру с чекбоксами"""
+    builder = InlineKeyboardBuilder()
+
+    for chat in chats[:50]:
+        sn = chat.get("sn", "")
+        name = chat.get("name") or chat.get("friendly") or sn
+        name = name[:30] + "…" if len(name) > 30 else name
+
+        # Чекбокс
+        checkbox = "☑️" if sn in selected else "⬜"
+        builder.button(text=f"{checkbox} {name}", callback_data=f"select:{sn}")
+
+    builder.adjust(1)
+
+    # Кнопки управления
+    builder.row(
+        InlineKeyboardButton(text="✅ Выбрать все", callback_data="select_all_groups"),
+        InlineKeyboardButton(text="❌ Сбросить", callback_data="clear_selection"),
+    )
+    if show_private_btn:
+        builder.row(
+            InlineKeyboardButton(text="👤 Личные чаты", callback_data="show_private"),
+        )
+    builder.row(
+        InlineKeyboardButton(text=f"📥 Экспорт ({len(selected)} шт.)", callback_data="do_export"),
+    )
+
+    return builder.as_markup()
 
 
 @router.callback_query(F.data.startswith("select:"))
@@ -379,22 +382,51 @@ async def toggle_chat_selection(callback: CallbackQuery, state: FSMContext):
 
     if sn in selected:
         selected.remove(sn)
-        await callback.answer(f"❌ Убран из выбора")
     else:
         selected.append(sn)
-        await callback.answer(f"✅ Выбран для экспорта")
+
+    # Обновляем клавиатуру с новым состоянием чекбоксов
+    data = await state.get_data()
+    groups = data.get("groups", [])
+    private = data.get("private", [])
+
+    keyboard = build_chats_keyboard(groups, selected, show_private_btn=bool(private))
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        pass  # Если сообщение не изменилось
+
+    await callback.answer()
 
 
 @router.callback_query(F.data == "select_all_groups")
 async def select_all_groups(callback: CallbackQuery, state: FSMContext):
     """Выбрать все групповые чаты"""
     data = await state.get_data()
-    contacts = data.get("contacts", [])
+    groups = data.get("groups", [])
+    private = data.get("private", [])
 
-    groups = [c.get("sn") for c in contacts if "@chat.agent" in c.get("sn", "")]
-    user_selected_chats[callback.from_user.id] = groups
+    selected = [c.get("sn") for c in groups]
+    user_selected_chats[callback.from_user.id] = selected
 
-    await callback.answer(f"✅ Выбрано {len(groups)} групп")
+    keyboard = build_chats_keyboard(groups, selected, show_private_btn=bool(private))
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.answer(f"✅ Выбрано {len(selected)} групп")
+
+
+@router.callback_query(F.data == "clear_selection")
+async def clear_selection(callback: CallbackQuery, state: FSMContext):
+    """Сбросить выбор"""
+    data = await state.get_data()
+    groups = data.get("groups", [])
+    private = data.get("private", [])
+
+    user_selected_chats[callback.from_user.id] = []
+
+    keyboard = build_chats_keyboard(groups, [], show_private_btn=bool(private))
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.answer("❌ Выбор сброшен")
 
 
 @router.callback_query(F.data == "select_all")
