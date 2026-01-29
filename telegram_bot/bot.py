@@ -331,12 +331,16 @@ async def cmd_chats(message: Message, state: FSMContext):
             return
 
         # Разделяем на группы и личные чаты
-        groups = [c for c in contacts if "@chat.agent" in c.get("sn", "")]
+        all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "")]
         all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "")]
 
-        # Разделяем личные на обычные и скрытые (ДР, день рождения)
-        hidden = [c for c in all_private if is_birthday_chat(c.get("name", "") or c.get("sn", ""))]
-        private = [c for c in all_private if not is_birthday_chat(c.get("name", "") or c.get("sn", ""))]
+        # Фильтруем скрытые (ДР, день рождения) из обеих категорий
+        hidden_groups = [c for c in all_groups if is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        hidden_private = [c for c in all_private if is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        hidden = hidden_groups + hidden_private
+
+        groups = [c for c in all_groups if not is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
+        private = [c for c in all_private if not is_birthday_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
 
         # Сохраняем для выбора (сначала группы)
         await state.update_data(contacts=contacts, groups=groups, private=private, hidden=hidden)
@@ -427,6 +431,8 @@ def build_chats_keyboard(
     nav_row = []
     if mode == "groups":
         nav_row.append(InlineKeyboardButton(text="👤 Личные чаты", callback_data="show_private"))
+        if has_hidden:
+            nav_row.append(InlineKeyboardButton(text="🎂 Скрытые (ДР)", callback_data="show_hidden"))
     elif mode == "private":
         nav_row.append(InlineKeyboardButton(text="👥 Группы", callback_data="show_groups"))
         if has_hidden:
