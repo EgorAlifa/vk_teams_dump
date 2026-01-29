@@ -125,8 +125,12 @@ class VKTeamsClient:
         logger.debug(f"Found {len(events)} events, types: {[e.get('type') for e in events]}")
 
         for event in events:
-            if event.get("type") == "buddylist":
-                groups = event.get("data", {}).get("groups", [])
+            event_type = event.get("type")
+            event_data = event.get("eventData", event.get("data", {}))
+
+            if event_type == "buddylist":
+                # Контакты из buddylist
+                groups = event_data.get("groups", [])
                 for group in groups:
                     buddies = group.get("buddies", [])
                     for buddy in buddies:
@@ -135,6 +139,23 @@ class VKTeamsClient:
                             "name": buddy.get("friendly", buddy.get("aimId", "")),
                             "type": buddy.get("userType", ""),
                         })
+
+            elif event_type == "histDlgState":
+                # Диалоги/чаты из histDlgState
+                sn = event_data.get("sn", "")
+                if sn:
+                    # Определяем имя чата
+                    name = sn
+                    if event_data.get("chat"):
+                        name = event_data["chat"].get("name", sn)
+                    elif event_data.get("friendly"):
+                        name = event_data.get("friendly")
+
+                    contacts.append({
+                        "sn": sn,
+                        "name": name,
+                        "type": "chat" if "@chat.agent" in sn else "contact",
+                    })
 
         logger.info(f"Found {len(contacts)} contacts via fetchEvents")
         return contacts
