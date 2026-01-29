@@ -36,27 +36,18 @@ class VKTeamsSession:
 # =========================
 
 class VKTeamsClient:
-    """Клиент для работы с VK Teams API (WIM)"""
-
-    # правильные WIM методы
-    METHODS = {
-        "getContactList": "im/getContactList",
-        "getHistory": "im/getHistory",
-        "getChatInfo": "chat/getChatInfo",
-    }
+    """Клиент для работы с VK Teams API (RAPI)"""
 
     def __init__(self, session: VKTeamsSession):
         self.session = session
-        self.api_base = "https://u.myteam.vmailru.net/api/v139/wim"
+        # Используем rapi вместо wim - проверено что работает
+        self.api_base = "https://u.myteam.vmailru.net/api/v139/rapi"
 
     def _generate_req_id(self) -> str:
         return f"{random.randint(1000, 9999)}-{int(time.time() * 1000)}"
 
-    async def _request(self, method_key: str, params: dict) -> dict:
-        """Выполнить запрос к WIM API"""
-
-        if method_key not in self.METHODS:
-            raise ValueError(f"Unknown API method key: {method_key}")
+    async def _request(self, method: str, params: dict) -> dict:
+        """Выполнить запрос к RAPI"""
 
         body = {
             "reqId": self._generate_req_id(),
@@ -64,10 +55,7 @@ class VKTeamsClient:
             "params": params
         }
 
-        url = (
-            f"{self.api_base}/{self.METHODS[method_key]}"
-            f"?aimsid={self.session.aimsid}"
-        )
+        url = f"{self.api_base}/{method}"
 
         headers = {
             "Accept": "application/json",
@@ -77,7 +65,7 @@ class VKTeamsClient:
             "Referer": "https://myteam.mail.ru/",
         }
 
-        logger.debug(f"API request: {method_key} -> {url}")
+        logger.debug(f"API request: {method} -> {url}")
 
         async with aiohttp.ClientSession() as http:
             async with http.post(url, json=body, headers=headers) as response:
