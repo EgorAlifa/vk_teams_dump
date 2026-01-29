@@ -232,13 +232,15 @@ class VKTeamsAuth:
         logger.info(f"Sending code request to: {url}")
 
         async with aiohttp.ClientSession() as http:
-            async with http.get(
+            async with http.post(
                 url,
                 headers={
                     "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
-                }
+                },
+                data="pwd=1"
             ) as response:
                 logger.debug(f"Response status: {response.status}")
                 logger.debug(f"Response content-type: {response.content_type}")
