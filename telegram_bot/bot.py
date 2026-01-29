@@ -57,11 +57,17 @@ def is_birthday_chat(name: str) -> bool:
     """Проверить, является ли чат 'днём рождения' (ДР или день рождения)"""
     import re
     name_lower = name.lower()
-    # Целое слово "др" (не часть слова)
-    if re.search(r'\bдр\b', name_lower):
+
+    # "день рождения" или "день рождение" (с опечаткой)
+    if 'день рождени' in name_lower:
         return True
-    if 'день рождения' in name_lower:
+
+    # Целое слово "др" - проверяем что перед и после нет кириллических букв
+    # \b не работает с кириллицей, поэтому проверяем через negative lookbehind/lookahead
+    pattern = r'(?<![а-яёa-z])др(?![а-яёa-z])'
+    if re.search(pattern, name_lower):
         return True
+
     return False
 
 
