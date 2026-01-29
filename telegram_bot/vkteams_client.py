@@ -240,17 +240,145 @@ class VKTeamsAuth:
         """
         Проверить код и получить сессию (aimsid)
 
-        Endpoint: нужно определить из веб-версии
-        Примерно: POST /verifyCode или /startSession
-
-        TODO: Реверснуть второй шаг авторизации
+        Шаг 2: POST /clientLogin?tokenType=longTerm + pwd=КОД → token.a
+        Шаг 3: POST /aim/startSession?a=TOKEN → aimsid
         """
-        # Пока заглушка - нужно узнать endpoint
-        raise NotImplementedError(
-            "Второй шаг авторизации (ввод кода) ещё не реализован.\n"
-            "Нужно посмотреть в Network tab какой запрос идёт после ввода кода.\n"
-            "Пока используй ручной ввод aimsid."
-        )
+        import urllib.parse
+        import uuid
+
+        # Шаг 2: Получаем token
+        params = {
+            "tokenType": "longTerm",
+            "clientName": self.CLIENT_NAME,
+            "clientVersion": self.CLIENT_VERSION,
+            "idType": "ICQ",
+            "s": email,
+            "k": self.CLIENT_KEY,
+        }
+
+        url = f"{self.api_base}/clientLogin?" + urllib.parse.urlencode(params)
+
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                url,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin": "https://myteam.mail.ru",
+                    "Referer": "https://myteam.mail.ru/",
+                },
+                data=f"pwd={code}"
+            ) as response:
+                data = await response.json()
+
+        if data.get("response", {}).get("statusCode") != 200:
+            error_text = data.get("response", {}).get("statusText", "Unknown error")
+            raise Exception(f"Неверный код или ошибка: {error_text}")
+
+        token_data = data.get("response", {}).get("data", {})
+        token_a = token_data.get("token", {}).get("a")
+        session_secret = token_data.get("sessionSecret")
+
+        if not token_a:
+            raise Exception("Не удалось получить токен авторизации")
+
+        # Шаг 3: Получаем aimsid через startSession
+        aimsid = await self._start_session(email, token_a)
+
+        return VKTeamsSession(aimsid=aimsid, email=email)
+
+    async def _start_session(self, email: str, token_a: str) -> str:
+        """
+        Шаг 3: Создание сессии и получение aimsid
+
+        POST /aim/startSession?a=TOKEN&userSn=email&...
+        """
+        import urllib.parse
+        import uuid
+        import time
+
+        device_id = str(uuid.uuid4())
+        ts = int(time.time())
+
+        # Capabilities (из оригинального запроса)
+        assert_caps = [
+            "094613584C7F11D18222444553540000",
+            "0946135C4C7F11D18222444553540000",
+            "0946135b4c7f11d18222444553540000",
+            "0946135E4C7F11D18222444553540000",
+            "AABC2A1AF270424598B36993C6231952",
+            "1f99494e76cbc880215d6aeab8e42268",
+            "A20C362CD4944B6EA3D1E77642201FD8",
+            "B5ED3E51C7AC4137B5926BC686E7A60D",
+            "094613504c7f11d18222444553540000",
+            "094613514c7f11d18222444553540000",
+            "094613564c7f11d18222444553540000",
+            "094613503c7f11d18222444553540000",
+        ]
+
+        interest_caps = [
+            "8eec67ce70d041009409a7c1602a5c84",
+            "094613504c7f11d18222444553540000",
+            "094613514c7f11d18222444553540000",
+            "094613564c7f11d18222444553540000",
+        ]
+
+        events = [
+            "myInfo", "presence", "buddylist", "typing", "hiddenChat",
+            "hist", "mchat", "sentIM", "imState", "dataIM", "offlineIM",
+            "userAddedToBuddyList", "service", "lifestream", "apps",
+            "permitDeny", "diff", "webrtcMsg"
+        ]
+
+        presence_fields = [
+            "aimId", "displayId", "friendly", "friendlyName", "state",
+            "userType", "statusMsg", "statusTime", "ssl", "mute",
+            "counterEnabled", "abContactName", "abPhoneNumber", "abPhones",
+            "official", "quiet", "autoAddition", "largeIconId", "nick", "userState"
+        ]
+
+        params = {
+            "ts": ts,
+            "a": token_a,
+            "userSn": email,
+            "trigger": "normalLogin",
+            "k": self.CLIENT_KEY,
+            "view": "online",
+            "clientName": self.CLIENT_NAME,
+            "language": "ru-RU",
+            "deviceId": device_id,
+            "sessionTimeout": 2592000,  # 30 дней
+            "assertCaps": ",".join(assert_caps),
+            "interestCaps": ",".join(interest_caps),
+            "subscriptions": "status",
+            "events": ",".join(events),
+            "includePresenceFields": ",".join(presence_fields),
+        }
+
+        # Используем базовый URL без /auth
+        base_url = self.api_base.replace("/wim/auth", "/wim/aim")
+        url = f"{base_url}/startSession?" + urllib.parse.urlencode(params)
+
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                url,
+                headers={
+                    "Content-Type": "text/plain;charset=UTF-8",
+                    "Origin": "https://myteam.mail.ru",
+                    "Referer": "https://myteam.mail.ru/",
+                },
+            ) as response:
+                data = await response.json()
+
+        if data.get("response", {}).get("statusCode") != 200:
+            error_text = data.get("response", {}).get("statusText", "Unknown error")
+            raise Exception(f"Ошибка создания сессии: {error_text}")
+
+        aimsid = data.get("response", {}).get("data", {}).get("aimsid")
+
+        if not aimsid:
+            raise Exception("Не удалось получить aimsid")
+
+        return aimsid
 
     @staticmethod
     def create_session_from_aimsid(aimsid: str) -> VKTeamsSession:
