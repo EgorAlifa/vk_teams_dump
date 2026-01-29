@@ -329,12 +329,13 @@ def render_message(msg: dict, pinned: bool = False) -> str:
             media_type = part.get("mediaType")
 
             if media_type == "text":
-                text = part.get("captionedContent", {}).get("caption") or part.get("text", "")
+                captioned = part.get("captionedContent") or {}
+                text = captioned.get("caption") or part.get("text", "")
                 content_html += f'<div class="text">{escape(text)}</div>'
 
             elif media_type == "quote":
                 quote_sender = escape(part.get("sn", ""))
-                quote_text = escape(part.get("text", "")[:200])
+                quote_text = escape(str(part.get("text", ""))[:200])
                 content_html += f'''
                     <div class="quote">
                         <div class="quote-sender">↩️ {quote_sender}</div>
@@ -344,8 +345,9 @@ def render_message(msg: dict, pinned: bool = False) -> str:
 
             elif media_type == "forward":
                 fwd_sender = escape(part.get("sn", ""))
+                captioned = part.get("captionedContent") or {}
                 fwd_text = escape(
-                    (part.get("captionedContent", {}).get("caption") or part.get("text", ""))[:300]
+                    str(captioned.get("caption") or part.get("text", ""))[:300]
                 )
                 content_html += f'''
                     <div class="quote" style="border-color: #9c27b0;">
