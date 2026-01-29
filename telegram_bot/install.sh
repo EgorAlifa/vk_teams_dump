@@ -173,6 +173,14 @@ if ! python3 -m venv --help &> /dev/null 2>&1; then
     esac
 fi
 
+# Проверяем существующий venv — если сломан, удаляем
+if [ -d "venv" ]; then
+    if [ ! -f "venv/bin/activate" ]; then
+        echo -e "${YELLOW}⚠ Виртуальное окружение повреждено, пересоздаю...${NC}"
+        rm -rf venv
+    fi
+fi
+
 # Создаём виртуальное окружение
 if [ ! -d "venv" ]; then
     # Пробуем создать venv
@@ -185,7 +193,7 @@ if [ ! -d "venv" ]; then
         echo -e "${GREEN}✓ Виртуальное окружение создано (без pip)${NC}"
     fi
 else
-    echo -e "${YELLOW}• Виртуальное окружение уже существует${NC}"
+    echo -e "${GREEN}✓ Виртуальное окружение уже существует${NC}"
 fi
 
 # Активируем venv
