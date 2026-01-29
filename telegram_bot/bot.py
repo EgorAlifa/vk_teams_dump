@@ -68,6 +68,10 @@ def is_hidden_chat(name: str) -> bool:
     if 'женил' in name_lower:  # женился, женилась, женились...
         return True
 
+    # Стал отцом / стала мамой
+    if 'стал отцом' in name_lower or 'стала мамой' in name_lower:
+        return True
+
     # Целое слово "др" - проверяем что перед и после нет кириллических букв
     # \b не работает с кириллицей, поэтому проверяем через negative lookbehind/lookahead
     pattern = r'(?<![а-яёa-z])др(?![а-яёa-z])'
@@ -75,6 +79,22 @@ def is_hidden_chat(name: str) -> bool:
         return True
 
     return False
+
+
+def is_unnamed_chat(chat: dict) -> bool:
+    """Проверить, является ли чат безымянным (дубль/удалённый)"""
+    name = chat.get("name", "")
+    friendly = chat.get("friendly", "")
+    sn = chat.get("sn", "")
+
+    # Если есть нормальное имя - не безымянный
+    if name and not name.endswith("@chat.agent"):
+        return False
+    if friendly and not friendly.endswith("@chat.agent"):
+        return False
+
+    # Если имя это просто sn - безымянный
+    return True
 
 
 # ============== Handlers ==============
@@ -336,35 +356,14 @@ async def cmd_chats(message: Message, state: FSMContext):
             await status_msg.edit_text("📭 У тебя нет чатов")
             return
 
-        # Дозапрашиваем имена для чатов без названия (параллельно, батчами по 10)
-        unnamed_chats = [c for c in contacts if not c.get("name") and not c.get("friendly")]
-        if unnamed_chats:
-            try:
-                await status_msg.edit_text(f"⏳ Загружаю имена чатов ({len(unnamed_chats)} шт.)...")
-            except Exception:
-                pass
+        # Разделяем на группы и личные чаты (без безымянных дублей)
+        all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "") and not is_unnamed_chat(c)]
+        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c)]
 
-            async def fetch_name(chat: dict) -> None:
-                try:
-                    info = await client.get_chat_info(chat["sn"])
-                    if info and info.get("name"):
-                        chat["name"] = info["name"]
-                    elif info and info.get("friendly"):
-                        chat["friendly"] = info["friendly"]
-                except Exception:
-                    pass
+        # Считаем скрытые безымянные
+        unnamed_count = len([c for c in contacts if is_unnamed_chat(c)])
 
-            # Батчами по 10 чтобы не перегружать API
-            batch_size = 10
-            for i in range(0, len(unnamed_chats), batch_size):
-                batch = unnamed_chats[i:i + batch_size]
-                await asyncio.gather(*[fetch_name(c) for c in batch])
-
-        # Разделяем на группы и личные чаты
-        all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "")]
-        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "")]
-
-        # Фильтруем скрытые (ДР, день рождения) из обеих категорий
+        # Фильтруем скрытые (ДР, свадьба и т.п.) из обеих категорий
         hidden_groups = [c for c in all_groups if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
         hidden_private = [c for c in all_private if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
         hidden = hidden_groups + hidden_private
@@ -383,12 +382,13 @@ async def cmd_chats(message: Message, state: FSMContext):
         # Формируем клавиатуру с чекбоксами
         keyboard = build_chats_keyboard(groups, [], page=0, mode="groups", has_hidden=len(hidden) > 0)
 
-        hidden_text = f"\n🎂 Скрытых (ДР): {len(hidden)}" if hidden else ""
+        hidden_text = f"\n🎂 Скрытых (ДР/свадьба): {len(hidden)}" if hidden else ""
+        unnamed_text = f"\n🚫 Безымянных (дубли): {unnamed_count}" if unnamed_count else ""
         shown_text = f"(показано {min(50, len(groups))} из {len(groups)})" if len(groups) > 50 else ""
 
         await status_msg.edit_text(
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.) {shown_text}\n"
-            f"👤 Личных переписок: {len(private)}{hidden_text}\n\n"
+            f"👤 Личных переписок: {len(private)}{hidden_text}{unnamed_text}\n\n"
             f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
