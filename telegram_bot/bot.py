@@ -309,36 +309,40 @@ async def cmd_chats(message: Message, state: FSMContext):
             await status_msg.edit_text("📭 У тебя нет чатов")
             return
 
-        # Сохраняем для выбора
-        await state.update_data(contacts=contacts)
-
         # Разделяем на группы и личные чаты
         groups = [c for c in contacts if "@chat.agent" in c.get("sn", "")]
         private = [c for c in contacts if "@chat.agent" not in c.get("sn", "")]
 
-        # Формируем клавиатуру (первые 50 чатов)
+        # Сохраняем для выбора (сначала группы)
+        await state.update_data(contacts=contacts, groups=groups, private=private)
+
+        # Формируем клавиатуру — показываем только группы (первые 50)
         builder = InlineKeyboardBuilder()
 
-        for i, chat in enumerate(contacts[:50]):
-            sn = chat.get("sn", "")
-            name = chat.get("friendly") or chat.get("nick") or sn
-            name = name[:30] + "..." if len(name) > 30 else name
+        chats_to_show = groups[:50]  # Показываем только группы
 
-            # Эмодзи для типа чата
-            emoji = "👥" if "@chat.agent" in sn else "👤"
+        for chat in chats_to_show:
+            sn = chat.get("sn", "")
+            name = chat.get("name") or chat.get("friendly") or sn
+            name = name[:35] + "…" if len(name) > 35 else name
 
             builder.button(
-                text=f"{emoji} {name}",
+                text=f"👥 {name}",
                 callback_data=f"select:{sn}"
             )
+
+        builder.adjust(1)  # По одной кнопке в ряд
 
         builder.adjust(1)  # По одной кнопке в ряд
 
         # Добавляем кнопки управления
         builder.row(
             InlineKeyboardButton(text="✅ Выбрать все группы", callback_data="select_all_groups"),
-            InlineKeyboardButton(text="✅ Выбрать все", callback_data="select_all"),
         )
+        if private:
+            builder.row(
+                InlineKeyboardButton(text="👤 Показать личные чаты", callback_data="show_private"),
+            )
         builder.row(
             InlineKeyboardButton(text="📥 Экспортировать выбранные", callback_data="do_export"),
         )
@@ -346,11 +350,12 @@ async def cmd_chats(message: Message, state: FSMContext):
         # Инициализируем выбранные чаты
         user_selected_chats[message.from_user.id] = []
 
+        shown_text = f"(показано {len(chats_to_show)} из {len(groups)})" if len(groups) > 50 else ""
+
         await status_msg.edit_text(
-            f"💬 <b>Твои чаты</b> ({len(contacts)} шт.)\n\n"
-            f"👥 Групп: {len(groups)}\n"
-            f"👤 Личных: {len(private)}\n\n"
-            f"Нажми на чаты для выбора, затем «Экспортировать»",
+            f"👥 <b>Групповые чаты</b> ({len(groups)} шт.) {shown_text}\n"
+            f"👤 Личных переписок: {len(private)}\n\n"
+            f"Выбери чаты и нажми «Экспортировать»",
             reply_markup=builder.as_markup(),
             parse_mode="HTML"
         )
