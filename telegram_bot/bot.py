@@ -336,6 +336,30 @@ async def cmd_chats(message: Message, state: FSMContext):
             await status_msg.edit_text("📭 У тебя нет чатов")
             return
 
+        # Дозапрашиваем имена для чатов без названия (параллельно, батчами по 10)
+        unnamed_chats = [c for c in contacts if not c.get("name") and not c.get("friendly")]
+        if unnamed_chats:
+            try:
+                await status_msg.edit_text(f"⏳ Загружаю имена чатов ({len(unnamed_chats)} шт.)...")
+            except Exception:
+                pass
+
+            async def fetch_name(chat: dict) -> None:
+                try:
+                    info = await client.get_chat_info(chat["sn"])
+                    if info and info.get("name"):
+                        chat["name"] = info["name"]
+                    elif info and info.get("friendly"):
+                        chat["friendly"] = info["friendly"]
+                except Exception:
+                    pass
+
+            # Батчами по 10 чтобы не перегружать API
+            batch_size = 10
+            for i in range(0, len(unnamed_chats), batch_size):
+                batch = unnamed_chats[i:i + batch_size]
+                await asyncio.gather(*[fetch_name(c) for c in batch])
+
         # Разделяем на группы и личные чаты
         all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "")]
         all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "")]
