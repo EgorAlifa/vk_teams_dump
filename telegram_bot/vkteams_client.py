@@ -6,9 +6,17 @@ VK Teams API Client
 import asyncio
 import aiohttp
 import random
+import logging
 from dataclasses import dataclass
 from typing import Optional
 import config
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,12 +50,18 @@ class VKTeamsClient:
             "x-teams-aimsid": self.session.aimsid
         }
 
+        url = f"{self.api_base}/{method}"
+        logger.debug(f"API request: {method}")
+
         async with aiohttp.ClientSession() as http:
-            async with http.post(
-                f"{self.api_base}/{method}",
-                json=body,
-                headers=headers
-            ) as response:
+            async with http.post(url, json=body, headers=headers) as response:
+                logger.debug(f"Response status: {response.status}, content-type: {response.content_type}")
+
+                if response.content_type != "application/json":
+                    text = await response.text()
+                    logger.error(f"Non-JSON response: {text[:500]}")
+                    raise Exception(f"API returned {response.content_type}: {text[:200]}")
+
                 return await response.json()
 
     async def get_contact_list(self) -> list[dict]:
@@ -218,21 +232,34 @@ class VKTeamsAuth:
         }
 
         url = f"{self.api_base}/clientLogin?" + urllib.parse.urlencode(params)
+        logger.info(f"Sending code request to: {url}")
 
         async with aiohttp.ClientSession() as http:
             async with http.get(
                 url,
                 headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
-                },
-                data="pwd=1"
+                }
             ) as response:
-                data = await response.json()
+                logger.debug(f"Response status: {response.status}")
+                logger.debug(f"Response content-type: {response.content_type}")
+
+                # Читаем текст для диагностики
+                text = await response.text()
+                logger.debug(f"Response body (first 500 chars): {text[:500]}")
+
+                if response.content_type != "application/json":
+                    raise Exception(f"Unexpected response type: {response.content_type}. Body: {text[:200]}")
+
+                import json
+                data = json.loads(text)
 
         if data.get("response", {}).get("statusCode") != 200:
-            raise Exception(f"Auth Error: {data}")
+            error_detail = data.get("response", {})
+            logger.error(f"API error: {error_detail}")
+            raise Exception(f"Auth Error: {error_detail}")
 
         return data.get("response", {}).get("data", {})
 
@@ -257,26 +284,38 @@ class VKTeamsAuth:
         }
 
         url = f"{self.api_base}/clientLogin?" + urllib.parse.urlencode(params)
+        logger.info(f"Verifying code, URL: {url}")
 
         async with aiohttp.ClientSession() as http:
             async with http.post(
                 url,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
                 },
                 data=f"pwd={code}"
             ) as response:
-                data = await response.json()
+                logger.debug(f"Response status: {response.status}")
+                text = await response.text()
+                logger.debug(f"Response body (first 500 chars): {text[:500]}")
+
+                if response.content_type != "application/json":
+                    raise Exception(f"Unexpected response: {text[:200]}")
+
+                import json
+                data = json.loads(text)
 
         if data.get("response", {}).get("statusCode") != 200:
             error_text = data.get("response", {}).get("statusText", "Unknown error")
+            logger.error(f"Verify code failed: {data}")
             raise Exception(f"Неверный код или ошибка: {error_text}")
 
         token_data = data.get("response", {}).get("data", {})
         token_a = token_data.get("token", {}).get("a")
         session_secret = token_data.get("sessionSecret")
+        logger.info(f"Got token_a: {token_a[:20] if token_a else 'None'}...")
 
         if not token_a:
             raise Exception("Не удалось получить токен авторизации")
@@ -357,23 +396,35 @@ class VKTeamsAuth:
         # Используем базовый URL без /auth
         base_url = self.api_base.replace("/wim/auth", "/wim/aim")
         url = f"{base_url}/startSession?" + urllib.parse.urlencode(params)
+        logger.info(f"Starting session, URL: {url[:100]}...")
 
         async with aiohttp.ClientSession() as http:
             async with http.post(
                 url,
                 headers={
                     "Content-Type": "text/plain;charset=UTF-8",
+                    "Accept": "application/json",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
                 },
             ) as response:
-                data = await response.json()
+                logger.debug(f"Response status: {response.status}")
+                text = await response.text()
+                logger.debug(f"Response body (first 500 chars): {text[:500]}")
+
+                if response.content_type != "application/json":
+                    raise Exception(f"Unexpected response: {text[:200]}")
+
+                import json
+                data = json.loads(text)
 
         if data.get("response", {}).get("statusCode") != 200:
             error_text = data.get("response", {}).get("statusText", "Unknown error")
+            logger.error(f"Start session failed: {data}")
             raise Exception(f"Ошибка создания сессии: {error_text}")
 
         aimsid = data.get("response", {}).get("data", {}).get("aimsid")
+        logger.info(f"Got aimsid: {aimsid[:30] if aimsid else 'None'}...")
 
         if not aimsid:
             raise Exception("Не удалось получить aimsid")
