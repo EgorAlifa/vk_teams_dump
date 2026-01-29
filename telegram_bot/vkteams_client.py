@@ -90,8 +90,21 @@ class VKTeamsClient:
 
     async def get_contact_list(self) -> list[dict]:
         """Получить список всех чатов/контактов"""
-        results = await self._request("getContactList", {"lang": "ru"})
-        return results.get("contacts", [])
+        # Пробуем разные методы - API недокументирован
+        for method in ["getBuddyList", "getContactList", "getChats"]:
+            try:
+                logger.debug(f"Trying method: {method}")
+                results = await self._request(method, {"lang": "ru"})
+                contacts = results.get("contacts", results.get("buddies", results.get("groups", [])))
+                if contacts:
+                    return contacts
+            except Exception as e:
+                logger.debug(f"Method {method} failed: {e}")
+                continue
+
+        # Если ничего не сработало, возвращаем пустой список
+        logger.warning("No working method found for contact list")
+        return []
 
     async def get_chat_info(self, sn: str) -> dict:
         """Получить информацию о чате"""
