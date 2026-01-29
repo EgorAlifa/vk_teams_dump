@@ -202,18 +202,37 @@ source venv/bin/activate
 # Если pip нет в venv - устанавливаем
 if ! pip --version &> /dev/null 2>&1; then
     echo -e "${YELLOW}Устанавливаю pip в виртуальное окружение...${NC}"
-    curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
-    python /tmp/get-pip.py --quiet
+    curl -sSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}✗ Не удалось скачать get-pip.py${NC}"
+        exit 1
+    fi
+    python /tmp/get-pip.py
     rm -f /tmp/get-pip.py
 fi
+
+# Проверяем что pip работает
+if ! pip --version &> /dev/null 2>&1; then
+    echo -e "${RED}✗ pip не установлен в виртуальное окружение${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ pip в venv работает${NC}"
 
 #############################################
 # 4. Установка зависимостей Python
 #############################################
 echo -e "\n${BLUE}[4/5] Устанавливаю зависимости Python...${NC}"
 
-pip install --upgrade pip -q 2>/dev/null
-pip install -r requirements.txt -q 2>/dev/null
+echo "Обновляю pip..."
+pip install --upgrade pip
+
+echo "Устанавливаю зависимости из requirements.txt..."
+pip install -r requirements.txt
+
+if [ $? -ne 0 ]; then
+    echo -e "${RED}✗ Ошибка установки зависимостей${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}✓ Зависимости установлены${NC}"
 
