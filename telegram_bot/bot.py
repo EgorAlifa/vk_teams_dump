@@ -179,7 +179,7 @@ async def handle_choose_chats(message: Message, state: FSMContext):
 # -------- Main --------
 
 async def main():
-    bot = Bot(token=config.BOT_TOKEN)
+    bot = Bot(token=config.TG_BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
 
