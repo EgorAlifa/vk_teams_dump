@@ -6,10 +6,23 @@ VK Teams API Client
 import asyncio
 import aiohttp
 import random
+import time
+import logging
 from dataclasses import dataclass
 from typing import Optional
 import config
 
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+# =========================
+# Models
+# =========================
 
 @dataclass
 class VKTeamsSession:
@@ -18,52 +31,84 @@ class VKTeamsSession:
     email: str
 
 
+# =========================
+# API Client
+# =========================
+
 class VKTeamsClient:
-    """Клиент для работы с VK Teams API"""
+    """Клиент для работы с VK Teams API (WIM)"""
+
+    # правильные WIM методы
+    METHODS = {
+        "getContactList": "im/getContactList",
+        "getHistory": "im/getHistory",
+        "getChatInfo": "chat/getChatInfo",
+    }
 
     def __init__(self, session: VKTeamsSession):
         self.session = session
-        self.api_base = config.VKTEAMS_API_BASE
+        self.api_base = "https://u.myteam.vmailru.net/api/v139/wim"
 
     def _generate_req_id(self) -> str:
-        return f"{random.randint(1000, 9999)}-{int(asyncio.get_event_loop().time() * 1000)}"
+        return f"{random.randint(1000, 9999)}-{int(time.time() * 1000)}"
 
-    async def _request(self, method: str, params: dict) -> dict:
-        """Выполнить запрос к API"""
+    async def _request(self, method_key: str, params: dict) -> dict:
+        """Выполнить запрос к WIM API"""
+
+        if method_key not in self.METHODS:
+            raise ValueError(f"Unknown API method key: {method_key}")
+
         body = {
             "reqId": self._generate_req_id(),
             "aimsid": self.session.aimsid,
             "params": params
         }
 
+        url = (
+            f"{self.api_base}/{self.METHODS[method_key]}"
+            f"?aimsid={self.session.aimsid}"
+        )
+
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "x-teams-aimsid": self.session.aimsid
+            "x-teams-aimsid": self.session.aimsid,
+            "Origin": "https://myteam.mail.ru",
+            "Referer": "https://myteam.mail.ru/",
         }
 
+        logger.debug(f"API request: {method_key} -> {url}")
+
         async with aiohttp.ClientSession() as http:
-            async with http.post(
-                f"{self.api_base}/{method}",
-                json=body,
-                headers=headers
-            ) as response:
-                return await response.json()
+            async with http.post(url, json=body, headers=headers) as response:
+                logger.debug(f"Response status: {response.status}, content-type: {response.content_type}")
+
+                if response.content_type != "application/json":
+                    text = await response.text()
+                    logger.error(f"Non-JSON response: {text[:500]}")
+                    raise Exception(f"API returned {response.content_type}: {text[:200]}")
+
+                data = await response.json()
+
+        # единая проверка статуса
+        status = data.get("status", {})
+        if status.get("code") != 20000:
+            logger.error(f"API error: {status}")
+            raise Exception(f"API Error: {status}")
+
+        return data.get("results", {})
+
+    # ---------------------
 
     async def get_contact_list(self) -> list[dict]:
         """Получить список всех чатов/контактов"""
-        data = await self._request("getContactList", {"lang": "ru"})
-
-        if data.get("status", {}).get("code") != 20000:
-            raise Exception(f"API Error: {data.get('status')}")
-
-        contacts = data.get("results", {}).get("contacts", [])
-        return contacts
+        results = await self._request("getContactList", {"lang": "ru"})
+        return results.get("contacts", [])
 
     async def get_chat_info(self, sn: str) -> dict:
         """Получить информацию о чате"""
-        data = await self._request("getChatInfo", {"sn": sn, "lang": "ru"})
-        return data.get("results", {})
+        results = await self._request("getChatInfo", {"sn": sn, "lang": "ru"})
+        return results
 
     async def get_history(
         self,
@@ -74,11 +119,11 @@ class VKTeamsClient:
         """
         Получить историю сообщений чата
 
-        Args:
-            sn: ID чата (например '687589145@chat.agent')
-            from_msg_id: ID сообщения для пагинации (получить более старые)
-            count: Количество сообщений (отрицательное = старые)
+        sn: ID чата (например '687589145@chat.agent')
+        from_msg_id: ID сообщения для пагинации
+        count: отрицательное = получать более старые
         """
+
         params = {
             "sn": sn,
             "count": count,
@@ -90,12 +135,9 @@ class VKTeamsClient:
         if from_msg_id:
             params["fromMsgId"] = from_msg_id
 
-        data = await self._request("getHistory", params)
+        return await self._request("getHistory", params)
 
-        if data.get("status", {}).get("code") != 20000:
-            raise Exception(f"API Error: {data.get('status')}")
-
-        return data.get("results", {})
+    # ---------------------
 
     async def export_chat(
         self,
@@ -103,17 +145,8 @@ class VKTeamsClient:
         max_messages: int = 10000,
         progress_callback=None
     ) -> dict:
-        """
-        Экспортировать всю историю чата
+        """Экспорт всей истории чата"""
 
-        Args:
-            sn: ID чата
-            max_messages: Максимальное количество сообщений
-            progress_callback: async функция для отчёта о прогрессе
-
-        Returns:
-            dict с messages, pinned, chat_info
-        """
         all_messages = []
         pinned_messages = []
         from_msg_id = None
@@ -123,52 +156,37 @@ class VKTeamsClient:
         while len(all_messages) < max_messages:
             request_count += 1
 
-            try:
-                results = await self.get_history(sn, from_msg_id)
+            results = await self.get_history(sn, from_msg_id)
 
-                # Сохраняем закреплённые (только из первого запроса)
-                if request_count == 1:
-                    pinned_messages = results.get("pinned", [])
-                    # Пробуем получить название чата
-                    if results.get("messages"):
-                        first_msg = results["messages"][0]
-                        chat_info = {
-                            "sn": sn,
-                            "name": first_msg.get("chat", {}).get("name", sn)
-                        }
+            if request_count == 1:
+                pinned_messages = results.get("pinned", [])
+                if results.get("messages"):
+                    first_msg = results["messages"][0]
+                    chat_info = {
+                        "sn": sn,
+                        "name": first_msg.get("chat", {}).get("name", sn)
+                    }
 
-                messages = results.get("messages", [])
+            messages = results.get("messages", [])
+            if not messages:
+                break
 
-                if not messages:
-                    break
+            all_messages.extend(messages)
 
-                all_messages.extend(messages)
+            if progress_callback:
+                await progress_callback(len(all_messages), request_count)
 
-                # Прогресс
-                if progress_callback:
-                    await progress_callback(len(all_messages), request_count)
+            older_msg_id = results.get("olderMsgId")
+            if not older_msg_id:
+                break
 
-                # Следующая страница
-                older_msg_id = results.get("olderMsgId")
-                if not older_msg_id:
-                    break
+            from_msg_id = older_msg_id
 
-                from_msg_id = older_msg_id
+            if len(messages) < abs(config.MESSAGES_PER_REQUEST):
+                break
 
-                # Если пришло меньше чем запрашивали — конец
-                if len(messages) < config.MESSAGES_PER_REQUEST:
-                    break
+            await asyncio.sleep(config.DELAY_BETWEEN_REQUESTS)
 
-                # Пауза между запросами
-                await asyncio.sleep(config.DELAY_BETWEEN_REQUESTS)
-
-            except Exception as e:
-                # При ошибке пробуем продолжить
-                if request_count > 3 and len(all_messages) == 0:
-                    raise e
-                await asyncio.sleep(2)
-
-        # Сортируем по времени (старые первые)
         all_messages.sort(key=lambda m: m.get("time", 0))
 
         return {
@@ -180,15 +198,15 @@ class VKTeamsClient:
         }
 
 
+# =========================
+# AUTH
+# =========================
+
 class VKTeamsAuth:
     """
-    Авторизация в VK Teams
-
-    ВНИМАНИЕ: Это недокументированный API!
-    Эндпоинты могут измениться в любой момент.
+    Авторизация в VK Teams (undocumented API)
     """
 
-    # Ключ клиента (из веб-версии)
     CLIENT_KEY = "ic1zmlWFTdkiTnkL"
     CLIENT_NAME = "webVKTeams"
     CLIENT_VERSION = "VKTeams Web"
@@ -197,15 +215,8 @@ class VKTeamsAuth:
         self.api_base = api_base or "https://u.myteam.vmailru.net/api/v139/wim/auth"
 
     async def send_code(self, email: str) -> dict:
-        """
-        Отправить код подтверждения на email
+        """Отправить код на email"""
 
-        Endpoint: GET /clientLogin?tokenType=otp_via_email&s=email
-        После вызова на почту приходит одноразовый пароль.
-
-        Returns:
-            dict с loginId и другими данными
-        """
         import urllib.parse
 
         params = {
@@ -218,35 +229,41 @@ class VKTeamsAuth:
         }
 
         url = f"{self.api_base}/clientLogin?" + urllib.parse.urlencode(params)
+        logger.info(f"Sending code request to: {url}")
 
         async with aiohttp.ClientSession() as http:
             async with http.get(
                 url,
                 headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
-                },
-                data="pwd=1"
+                }
             ) as response:
-                data = await response.json()
+                logger.debug(f"Response status: {response.status}")
+                logger.debug(f"Response content-type: {response.content_type}")
+
+                text = await response.text()
+                logger.debug(f"Response body (first 500 chars): {text[:500]}")
+
+                if response.content_type != "application/json":
+                    raise Exception(f"Unexpected response type: {response.content_type}. Body: {text[:200]}")
+
+                import json
+                data = json.loads(text)
 
         if data.get("response", {}).get("statusCode") != 200:
-            raise Exception(f"Auth Error: {data}")
+            error_detail = data.get("response", {})
+            logger.error(f"API error: {error_detail}")
+            raise Exception(f"Auth Error: {error_detail}")
 
-        return data.get("response", {}).get("data", {})
+        return data["response"]["data"]
 
     async def verify_code(self, email: str, code: str) -> VKTeamsSession:
-        """
-        Проверить код и получить сессию (aimsid)
+        """Проверить код и получить aimsid"""
 
-        Шаг 2: POST /clientLogin?tokenType=longTerm + pwd=КОД → token.a
-        Шаг 3: POST /aim/startSession?a=TOKEN → aimsid
-        """
         import urllib.parse
-        import uuid
 
-        # Шаг 2: Получаем token
         params = {
             "tokenType": "longTerm",
             "clientName": self.CLIENT_NAME,
@@ -257,49 +274,49 @@ class VKTeamsAuth:
         }
 
         url = f"{self.api_base}/clientLogin?" + urllib.parse.urlencode(params)
+        logger.info(f"Verifying code, URL: {url}")
 
         async with aiohttp.ClientSession() as http:
             async with http.post(
                 url,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
                 },
                 data=f"pwd={code}"
             ) as response:
-                data = await response.json()
+                logger.debug(f"Response status: {response.status}")
+                text = await response.text()
+                logger.debug(f"Response body (first 500 chars): {text[:500]}")
+
+                if response.content_type != "application/json":
+                    raise Exception(f"Unexpected response: {text[:200]}")
+
+                import json
+                data = json.loads(text)
 
         if data.get("response", {}).get("statusCode") != 200:
             error_text = data.get("response", {}).get("statusText", "Unknown error")
+            logger.error(f"Verify code failed: {data}")
             raise Exception(f"Неверный код или ошибка: {error_text}")
 
-        token_data = data.get("response", {}).get("data", {})
-        token_a = token_data.get("token", {}).get("a")
-        session_secret = token_data.get("sessionSecret")
+        token_a = data["response"]["data"]["token"]["a"]
+        logger.info(f"Got token_a: {token_a[:20] if token_a else 'None'}...")
 
-        if not token_a:
-            raise Exception("Не удалось получить токен авторизации")
-
-        # Шаг 3: Получаем aimsid через startSession
         aimsid = await self._start_session(email, token_a)
-
         return VKTeamsSession(aimsid=aimsid, email=email)
 
     async def _start_session(self, email: str, token_a: str) -> str:
-        """
-        Шаг 3: Создание сессии и получение aimsid
+        """POST /wim/aim/startSession"""
 
-        POST /aim/startSession?a=TOKEN&userSn=email&...
-        """
         import urllib.parse
         import uuid
-        import time
 
         device_id = str(uuid.uuid4())
         ts = int(time.time())
 
-        # Capabilities (из оригинального запроса)
         assert_caps = [
             "094613584C7F11D18222444553540000",
             "0946135C4C7F11D18222444553540000",
@@ -346,7 +363,7 @@ class VKTeamsAuth:
             "clientName": self.CLIENT_NAME,
             "language": "ru-RU",
             "deviceId": device_id,
-            "sessionTimeout": 2592000,  # 30 дней
+            "sessionTimeout": 2592000,
             "assertCaps": ",".join(assert_caps),
             "interestCaps": ",".join(interest_caps),
             "subscriptions": "status",
@@ -354,42 +371,41 @@ class VKTeamsAuth:
             "includePresenceFields": ",".join(presence_fields),
         }
 
-        # Используем базовый URL без /auth
         base_url = self.api_base.replace("/wim/auth", "/wim/aim")
         url = f"{base_url}/startSession?" + urllib.parse.urlencode(params)
+        logger.info(f"Starting session, URL: {url[:100]}...")
 
         async with aiohttp.ClientSession() as http:
             async with http.post(
                 url,
                 headers={
                     "Content-Type": "text/plain;charset=UTF-8",
+                    "Accept": "application/json",
                     "Origin": "https://myteam.mail.ru",
                     "Referer": "https://myteam.mail.ru/",
                 },
             ) as response:
-                data = await response.json()
+                logger.debug(f"Response status: {response.status}")
+                text = await response.text()
+                logger.debug(f"Response body (first 500 chars): {text[:500]}")
+
+                if response.content_type != "application/json":
+                    raise Exception(f"Unexpected response: {text[:200]}")
+
+                import json
+                data = json.loads(text)
 
         if data.get("response", {}).get("statusCode") != 200:
             error_text = data.get("response", {}).get("statusText", "Unknown error")
+            logger.error(f"Start session failed: {data}")
             raise Exception(f"Ошибка создания сессии: {error_text}")
 
-        aimsid = data.get("response", {}).get("data", {}).get("aimsid")
-
-        if not aimsid:
-            raise Exception("Не удалось получить aimsid")
+        aimsid = data["response"]["data"]["aimsid"]
+        logger.info(f"Got aimsid: {aimsid[:30] if aimsid else 'None'}...")
 
         return aimsid
 
     @staticmethod
     def create_session_from_aimsid(aimsid: str) -> VKTeamsSession:
-        """
-        Создать сессию из готового aimsid
-
-        aimsid формат: "010.XXXXXXXXX.XXXXXXXXX:email@domain.com"
-        """
-        # Извлекаем email из aimsid
-        email = ""
-        if ":" in aimsid:
-            email = aimsid.split(":")[-1]
-
+        email = aimsid.split(":")[-1] if ":" in aimsid else ""
         return VKTeamsSession(aimsid=aimsid, email=email)
