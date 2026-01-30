@@ -246,6 +246,9 @@ class VKTeamsClient:
         blocked_users = {}  # sn -> user state info
 
         current_url = self.session.fetch_base_url
+        # Добавляем короткий timeout чтобы сервер сразу возвращал ответ
+        if "timeout=" not in current_url:
+            current_url += "&timeout=1"
         iteration = 0
         total_events = 0
         hist_dlg_count = 0
@@ -358,6 +361,9 @@ class VKTeamsClient:
 
                 # Обновляем URL для следующей итерации
                 current_url = next_url
+                # Добавляем короткий timeout
+                if "timeout=" not in current_url:
+                    current_url += "&timeout=1"
 
                 # Небольшая пауза между запросами
                 await asyncio.sleep(0.1)
