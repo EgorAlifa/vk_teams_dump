@@ -308,10 +308,12 @@ class VKTeamsClient:
                             for buddy in buddies:
                                 sn = buddy.get("aimId", "")
                                 if sn and sn not in contacts_by_sn:
+                                    # Используем friendly если есть, иначе email (sn)
+                                    friendly = buddy.get("friendly", "")
                                     contact = {
                                         "sn": sn,
-                                        "name": buddy.get("friendly", sn),
-                                        "friendly": buddy.get("friendly", ""),
+                                        "name": friendly if friendly else sn,
+                                        "friendly": friendly,
                                         "type": buddy.get("userType", ""),
                                     }
                                     contacts_by_sn[sn] = contact
