@@ -357,13 +357,12 @@ async def cmd_chats(message: Message, state: FSMContext):
         keyboard = build_chats_keyboard(groups, [], page=0, mode="groups", has_hidden=len(hidden) > 0)
 
         hidden_text = f"\n🎂 Скрытых (ДР/свадьба): {len(hidden)}" if hidden else ""
-        deleted_text = f"\n👤❌ С удалёнными аккаунтами: {deleted_count}" if deleted_count else ""
+        deleted_text = f" (👤❌ удалённых: {deleted_count})" if deleted_count else ""
 
         await safe_edit_text(
             status_msg,
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.)\n"
             f"👤 Личных: {len(private)} (💬 с перепиской: {with_messages_count}){deleted_text}{hidden_text}\n\n"
-            f"<i>👤❌ — удалённые аккаунты (историю можно выгрузить)</i>\n\n"
             f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
