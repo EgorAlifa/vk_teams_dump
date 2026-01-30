@@ -22,43 +22,44 @@ git clone https://github.com/EgorAlifa/vk_teams_dump.git
 cd vk_teams_dump/telegram_bot
 ```
 
-### 2. Создайте Telegram бота
+### 2. Запустите установку
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+Скрипт автоматически:
+- Проверит и установит Python 3
+- Установит pip
+- Создаст виртуальное окружение (venv)
+- Установит все зависимости
+- Запросит токен Telegram бота и сохранит в `.env`
+- Создаст скрипт `run.sh` для запуска
+- Предложит сразу запустить бота
+
+### 3. Запуск бота
+
+После установки:
+```bash
+./run.sh
+```
+
+Или вручную:
+```bash
+source venv/bin/activate
+python bot.py
+```
+
+Остановка: `Ctrl+C`
+
+## Получение токена Telegram
 
 1. Откройте [@BotFather](https://t.me/BotFather) в Telegram
 2. Отправьте `/newbot`
 3. Введите имя и username бота
 4. Скопируйте токен
-
-### 3. Настройте конфиг
-
-```bash
-cp .env.example .env
-```
-
-Отредактируйте `.env`:
-```env
-TG_BOT_TOKEN=ваш_токен_от_botfather
-```
-
-### 4. Запуск
-
-**Вариант A: Docker Compose (рекомендуется)**
-
-```bash
-docker compose up -d
-```
-
-Бот запустится на фоне. Логи:
-```bash
-docker logs -f vkteams_export_bot
-```
-
-**Вариант B: Локально**
-
-```bash
-pip install -r requirements.txt
-python bot.py
-```
+5. Вставьте при запуске `install.sh` (или в файл `.env`)
 
 ## Использование бота
 
@@ -70,12 +71,52 @@ python bot.py
 6. Выберите нужные чаты (☑️)
 7. Нажмите «Экспорт» и выберите формат
 
+## Docker (альтернативный способ)
+
+Если предпочитаете Docker вместо `install.sh`:
+
+```bash
+# Создайте .env файл
+cp .env.example .env
+# Отредактируйте .env — вставьте TG_BOT_TOKEN
+
+# Запуск
+docker compose up -d
+
+# Логи
+docker logs -f vkteams_export_bot
+
+# Остановка
+docker compose down
+```
+
+### Docker команды
+
+```bash
+# Запуск только бота (без дашборда)
+docker compose up -d bot
+
+# Пересборка после изменений
+docker compose up -d --build
+
+# Логи дашборда
+docker logs -f vkteams_stats
+```
+
+### Ресурсы Docker
+
+Docker Compose настроен на минимальные ресурсы:
+- Бот: 1 CPU / 512 MB RAM
+- Дашборд: 0.25 CPU / 64 MB RAM
+
+Подходит для серверов 2 CPU / 4 GB RAM.
+
 ## Мониторинг
 
 При запуске через Docker Compose доступен дашборд статистики:
 
 ```
-http://localhost:8080
+http://<IP-сервера>:8080
 ```
 
 Показывает:
@@ -98,49 +139,24 @@ docker compose up -d bot  # Только бот
 
 ```
 telegram_bot/
+├── install.sh          # Скрипт установки (запустить первым!)
+├── run.sh              # Скрипт запуска (создаётся install.sh)
 ├── bot.py              # Основной файл бота
 ├── config.py           # Конфигурация
 ├── vkteams_client.py   # Клиент VK Teams API
 ├── export_formatter.py # Форматирование в JSON/HTML
 ├── stats.py            # Статистика (SQLite)
 ├── stats_server.py     # HTTP сервер дашборда
-├── requirements.txt    # Зависимости
+├── requirements.txt    # Зависимости Python
 ├── Dockerfile          # Docker образ
 ├── docker-compose.yml  # Docker Compose
 ├── .env.example        # Пример конфига
 └── README.md           # Документация
 ```
 
-## Docker
+## Systemd (для сервера без Docker)
 
-### Команды
-
-```bash
-# Запуск
-docker compose up -d
-
-# Логи бота
-docker logs -f vkteams_export_bot
-
-# Логи дашборда
-docker logs -f vkteams_stats
-
-# Остановка
-docker compose down
-
-# Пересборка после изменений
-docker compose up -d --build
-```
-
-### Ресурсы
-
-Docker Compose настроен на минимальные ресурсы:
-- Бот: 1 CPU / 512 MB RAM
-- Дашборд: 0.25 CPU / 64 MB RAM
-
-Подходит для серверов 2 CPU / 4 GB RAM.
-
-## Systemd (альтернатива Docker)
+После запуска `install.sh` можно настроить автозапуск через systemd:
 
 ```ini
 [Unit]
@@ -151,7 +167,7 @@ After=network.target
 Type=simple
 User=your_user
 WorkingDirectory=/path/to/telegram_bot
-ExecStart=/usr/bin/python3 bot.py
+ExecStart=/path/to/telegram_bot/venv/bin/python bot.py
 Restart=always
 RestartSec=10
 EnvironmentFile=/path/to/telegram_bot/.env
@@ -161,6 +177,8 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+sudo cp vkteams-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl enable vkteams-bot
 sudo systemctl start vkteams-bot
 ```
