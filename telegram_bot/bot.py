@@ -342,7 +342,8 @@ async def cmd_chats(message: Message, state: FSMContext):
 
         # Count stats
         with_messages_count = len([c for c in private if c.get("has_messages")])
-        blocked_count = len([c for c in all_private if c.get("is_blocked")])
+        # Считаем удалённых: is_blocked или имя = email
+        deleted_count = len([c for c in private if c.get("is_blocked") or (c.get("name") == c.get("sn") and "@" in c.get("sn", "") and "@chat.agent" not in c.get("sn", ""))])
 
         # Сохраняем для выбора (сначала группы)
         await state.update_data(contacts=contacts, groups=groups, private=private, hidden=hidden)
@@ -356,12 +357,13 @@ async def cmd_chats(message: Message, state: FSMContext):
         keyboard = build_chats_keyboard(groups, [], page=0, mode="groups", has_hidden=len(hidden) > 0)
 
         hidden_text = f"\n🎂 Скрытых (ДР/свадьба): {len(hidden)}" if hidden else ""
-        blocked_text = f"\n🚫 С удалёнными: {blocked_count}" if blocked_count else ""
+        deleted_text = f"\n👤❌ С удалёнными аккаунтами: {deleted_count}" if deleted_count else ""
 
         await safe_edit_text(
             status_msg,
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.)\n"
-            f"👤 Личных: {len(private)} (💬 с перепиской: {with_messages_count}){blocked_text}{hidden_text}\n\n"
+            f"👤 Личных: {len(private)} (💬 с перепиской: {with_messages_count}){deleted_text}{hidden_text}\n\n"
+            f"<i>👤❌ — удалённые аккаунты (историю можно выгрузить)</i>\n\n"
             f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
@@ -404,19 +406,20 @@ def build_chats_keyboard(
         sn = chat.get("sn", "")
         name = chat.get("name") or chat.get("friendly") or sn
 
-        # Mark blocked/deleted users
-        is_blocked = chat.get("is_blocked", False)
-        if is_blocked:
-            # Use email as name and add indicator
-            name = sn if sn else name
-            name = name[:23] + "…" if len(name) > 23 else name
-            name = f"🚫 {name}"
+        # Определяем удалённых пользователей: имя = email или есть is_blocked
+        is_deleted = chat.get("is_blocked", False) or (name == sn and "@" in sn and "@chat.agent" not in sn)
+
+        if is_deleted:
+            # Показываем email с пометкой
+            display_name = sn if sn else name
+            display_name = display_name[:23] + "…" if len(display_name) > 23 else display_name
+            display_name = f"👤❌ {display_name}"
         else:
-            name = name[:28] + "…" if len(name) > 28 else name
+            display_name = name[:28] + "…" if len(name) > 28 else name
 
         # Чекбокс
         checkbox = "☑️" if sn in selected else "⬜"
-        builder.button(text=f"{checkbox} {name}", callback_data=f"select:{sn}")
+        builder.button(text=f"{checkbox} {display_name}", callback_data=f"select:{sn}")
 
     builder.adjust(1)
 
