@@ -527,13 +527,28 @@ def format_as_html(data: dict) -> str:
 
         /* Mobile */
         @media (max-width: 768px) {{
-            .sidebar {{ width: 100%; position: absolute; z-index: 10; }}
-            .sidebar.hidden {{ display: none; }}
+            .sidebar {{ width: 100%; position: absolute; z-index: 10; height: 100vh; }}
+            .sidebar.hidden {{ display: none !important; }}
             .chat-area {{ width: 100%; }}
             .back-btn {{ display: block; }}
-            .messages-container {{ padding: 10px 15px; }}
-            .message {{ max-width: 85%; }}
+            .messages-container {{ padding: 8px 10px; }}
+            .message {{ max-width: 90%; font-size: 14px; padding: 6px 10px; }}
             .chat-placeholder {{ display: none; }}
+            .chat-item {{ padding: 10px 12px; -webkit-tap-highlight-color: transparent; }}
+            .chat-avatar {{ width: 45px; height: 45px; font-size: 18px; margin-right: 10px; }}
+            .chat-item-name {{ font-size: 14px; }}
+            .chat-item-preview {{ font-size: 12px; }}
+            .sidebar-header {{ padding: 12px; }}
+            .sidebar-header h1 {{ font-size: 16px; }}
+            .global-search {{ padding: 8px 12px; }}
+            .global-search input {{ padding: 8px 12px; font-size: 14px; }}
+            .search-mode {{ font-size: 11px; }}
+            .chat-header-bar {{ padding: 8px 10px; }}
+            .chat-header-name {{ font-size: 14px; }}
+            .msg-sender {{ font-size: 12px; }}
+            .msg-text {{ font-size: 13px; }}
+            .msg-time {{ font-size: 10px; }}
+            .pinned-bar {{ padding: 8px 12px; font-size: 12px; }}
         }}
     </style>
 </head>
@@ -751,6 +766,42 @@ def format_as_html(data: dict) -> str:
                 document.getElementById('globalSearch').focus();
             }}
         }});
+
+        // Touch support for mobile - make clicks work better
+        if (isMobile) {{
+            document.querySelectorAll('.chat-item').forEach((item, idx) => {{
+                item.addEventListener('touchend', function(e) {{
+                    e.preventDefault();
+                    selectChat(idx);
+                }}, {{ passive: false }});
+            }});
+
+            // Back button touch
+            document.querySelectorAll('.back-btn').forEach(btn => {{
+                btn.addEventListener('touchend', function(e) {{
+                    e.preventDefault();
+                    showChatList();
+                }}, {{ passive: false }});
+            }});
+
+            // Pinned bar touch
+            document.querySelectorAll('.pinned-bar').forEach(bar => {{
+                const idx = bar.getAttribute('onclick').match(/\\d+/)[0];
+                bar.addEventListener('touchend', function(e) {{
+                    e.preventDefault();
+                    togglePinned(idx);
+                }}, {{ passive: false }});
+            }});
+
+            // Search button touch
+            document.querySelectorAll('.search-chat-btn').forEach(btn => {{
+                const idx = btn.getAttribute('onclick').match(/\\d+/)[0];
+                btn.addEventListener('touchend', function(e) {{
+                    e.preventDefault();
+                    toggleChatSearch(idx);
+                }}, {{ passive: false }});
+            }});
+        }}
 
         // Открываем первый чат на десктопе
         if (!isMobile && {len(chats)} > 0) {{
