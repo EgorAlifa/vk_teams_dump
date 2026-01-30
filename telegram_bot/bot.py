@@ -511,12 +511,17 @@ async def show_private_chats(callback: CallbackQuery, state: FSMContext):
 
     keyboard = build_chats_keyboard(private, selected, page=0, mode="private", has_hidden=len(hidden) > 0, search_query=search_query)
 
+    # Считаем удалённых
+    deleted_count = len([c for c in private if c.get("is_blocked") or (c.get("name") == c.get("sn") and "@" in c.get("sn", "") and "@chat.agent" not in c.get("sn", ""))])
+
     hidden_text = f"\n🎂 Скрытых: {len(hidden)}" if hidden else ""
     search_text = f"\n🔍 Фильтр: «{search_query}»" if search_query else ""
+    deleted_text = f"\n👤❌ С удалёнными: {deleted_count}" if deleted_count else ""
 
     try:
         await callback.message.edit_text(
-            f"👤 <b>Личные чаты</b> ({len(private)} шт.){hidden_text}{search_text}\n\n"
+            f"👤 <b>Личные чаты</b> ({len(private)} шт.){deleted_text}{hidden_text}{search_text}\n\n"
+            f"<i>👤❌ — удалённые аккаунты (историю можно выгрузить)</i>\n\n"
             f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
