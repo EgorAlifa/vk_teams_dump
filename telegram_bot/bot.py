@@ -21,6 +21,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     FSInputFile,
+    BotCommand,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -32,12 +33,13 @@ from export_formatter import format_as_html, format_as_json
 router = Router()
 
 
+# Контакт поддержки
+SUPPORT_CONTACT = "e.nikonorov@goodt.me"
+
 # FSM States
 class AuthStates(StatesGroup):
-    waiting_auth_method = State()
     waiting_email = State()
     waiting_code = State()
-    waiting_aimsid = State()
 
 
 class ExportStates(StatesGroup):
@@ -53,8 +55,18 @@ user_exporting: dict[int, bool] = {}  # Блокировка повторных 
 user_search_query: dict[int, str] = {}  # Поисковый запрос
 
 
+def make_progress_bar(current: int, total: int, width: int = 20) -> str:
+    """Создать текстовый прогресс-бар"""
+    if total == 0:
+        return "░" * width
+    percent = current / total
+    filled = int(width * percent)
+    bar = "█" * filled + "░" * (width - filled)
+    return f"{bar} {current}/{total} ({int(percent * 100)}%)"
+
+
 def is_hidden_chat(name: str) -> bool:
-    """Проверить, является ли чат скрытым (ДР, свадьба и т.п.)"""
+    """Проверить, является ли чат скрытым (ДР, свадьба, поздравления и т.п.)"""
     import re
     name_lower = name.lower()
 
@@ -62,10 +74,18 @@ def is_hidden_chat(name: str) -> bool:
     if 'день рождени' in name_lower:
         return True
 
-    # Свадьба, женился/женилась
-    if 'свадьб' in name_lower:  # свадьба, свадьбы, свадьбой...
+    # Рождение сына/дочери
+    if 'рождени' in name_lower and ('сын' in name_lower or 'дочь' in name_lower or 'дочер' in name_lower):
         return True
-    if 'женил' in name_lower:  # женился, женилась, женились...
+
+    # Поздравление/поздравления
+    if 'поздравлен' in name_lower:
+        return True
+
+    # Свадьба, женился/женилась
+    if 'свадьб' in name_lower:
+        return True
+    if 'женил' in name_lower:
         return True
 
     # Стал отцом / стала мамой
@@ -73,7 +93,6 @@ def is_hidden_chat(name: str) -> bool:
         return True
 
     # Целое слово "др" - проверяем что перед и после нет кириллических букв
-    # \b не работает с кириллицей, поэтому проверяем через negative lookbehind/lookahead
     pattern = r'(?<![а-яёa-z])др(?![а-яёa-z])'
     if re.search(pattern, name_lower):
         return True
@@ -102,22 +121,23 @@ def is_unnamed_chat(chat: dict) -> bool:
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Приветствие и инструкция"""
-    text = """
-👋 <b>Привет! Я помогу экспортировать чаты из VK Teams.</b>
+    text = f"""
+📦 <b>VK Teams Export Bot</b>
+
+Данный бот предназначен для экспорта чатов из VK Teams.
 
 <b>Как это работает:</b>
-1. Ты даёшь мне токен сессии (aimsid) из VK Teams
-2. Я показываю список твоих чатов
-3. Ты выбираешь нужные
-4. Я экспортирую их в удобном формате
+1. Вы авторизуетесь через корпоративную почту
+2. Получаете код подтверждения на email
+3. Выбираете нужные чаты для экспорта
+4. Получаете файл с историей переписки
 
 <b>Команды:</b>
-/auth — авторизоваться (ввести aimsid)
-/chats — показать список чатов
-/export — экспортировать выбранные чаты
-/help — подробная инструкция
+/auth — авторизоваться
+/chats — список чатов
+/help — справка
 
-<b>Начни с /auth</b>
+По всем вопросам и при возникновении ошибок обращайтесь: <code>{SUPPORT_CONTACT}</code>
 """
     await message.answer(text, parse_mode="HTML")
 
@@ -125,78 +145,43 @@ async def cmd_start(message: Message):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """Подробная инструкция"""
-    text = """
-📖 <b>Инструкция по получению aimsid:</b>
+    text = f"""
+📖 <b>Справка по использованию</b>
 
-1. Открой VK Teams в браузере: https://myteam.mail.ru
-2. Залогинься в свой аккаунт
-3. Открой DevTools (F12)
-4. Перейди во вкладку <b>Network</b>
-5. Обнови страницу или открой любой чат
-6. Найди любой запрос к <code>rapi/</code>
-7. В Headers найди <code>x-teams-aimsid</code>
-8. Скопируй значение целиком
+<b>Авторизация:</b>
+1. Введите команду /auth
+2. Укажите вашу корпоративную почту
+3. Введите код, полученный на почту
 
-<b>Формат aimsid:</b>
-<code>010.XXXXXXXXX.XXXXXXXXX:your.email@domain.com</code>
+<b>Экспорт чатов:</b>
+1. После авторизации введите /chats
+2. Выберите нужные чаты (☑️)
+3. Нажмите «Экспорт»
+4. Выберите формат (JSON/HTML)
+
+<b>Форматы экспорта:</b>
+• <b>HTML</b> — удобен для чтения в браузере
+• <b>JSON</b> — для технической обработки данных
 
 ⚠️ <b>Важно:</b>
-• aimsid — это твоя сессия, храни её в секрете
-• Сессия истекает через некоторое время
-• Бот не хранит твои данные после экспорта
+• Сессия действительна ограниченное время
+• Данные не сохраняются на сервере после экспорта
+
+По вопросам: <code>{SUPPORT_CONTACT}</code>
 """
     await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("auth"))
 async def cmd_auth(message: Message, state: FSMContext):
-    """Начать авторизацию — выбор метода"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📧 Войти по Email (код на почту)", callback_data="auth:email")
-    builder.button(text="🔑 Ввести aimsid вручную", callback_data="auth:manual")
-    builder.adjust(1)
-
+    """Начать авторизацию через email"""
     text = """
 🔐 <b>Авторизация в VK Teams</b>
 
-Выбери способ входа:
-
-<b>📧 По Email</b> — введёшь почту, получишь код
-<b>🔑 Вручную</b> — скопируешь aimsid из браузера
+Введите вашу корпоративную почту:
 """
-    await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-
-
-@router.callback_query(F.data == "auth:email")
-async def auth_via_email(callback: CallbackQuery, state: FSMContext):
-    """Авторизация через email"""
-    await callback.answer()
-    await callback.message.edit_text(
-        "📧 <b>Вход по Email</b>\n\n"
-        "Введи свой email от VK Teams:",
-        parse_mode="HTML"
-    )
+    await message.answer(text, parse_mode="HTML")
     await state.set_state(AuthStates.waiting_email)
-
-
-@router.callback_query(F.data == "auth:manual")
-async def auth_manual(callback: CallbackQuery, state: FSMContext):
-    """Авторизация через ручной ввод aimsid"""
-    await callback.answer()
-    text = """
-🔑 <b>Ручной ввод aimsid</b>
-
-Отправь мне <code>aimsid</code> из VK Teams.
-
-<b>Как получить:</b>
-1. Открой https://myteam.mail.ru в браузере
-2. F12 → Network → любой запрос к rapi/
-3. Скопируй заголовок <code>x-teams-aimsid</code>
-
-Или напиши /help для подробной инструкции.
-"""
-    await callback.message.edit_text(text, parse_mode="HTML")
-    await state.set_state(AuthStates.waiting_aimsid)
 
 
 @router.message(AuthStates.waiting_email)
@@ -206,10 +191,10 @@ async def process_email(message: Message, state: FSMContext):
 
     # Валидация email
     if "@" not in email or "." not in email:
-        await message.answer("❌ Неверный формат email. Попробуй ещё раз:")
+        await message.answer("❌ Неверный формат email. Попробуйте ещё раз:")
         return
 
-    status_msg = await message.answer(f"⏳ Отправляю код на {email}...")
+    status_msg = await message.answer(f"⏳ Отправляем код на {email}...")
 
     try:
         auth = VKTeamsAuth()
@@ -220,22 +205,23 @@ async def process_email(message: Message, state: FSMContext):
 
         await status_msg.edit_text(
             f"✅ <b>Код отправлен!</b>\n\n"
-            f"Проверь почту <code>{email}</code>\n"
-            f"и отправь мне полученный код:",
+            f"Проверьте почту <code>{email}</code>\n"
+            f"и введите полученный код:",
             parse_mode="HTML"
         )
 
     except Exception as e:
         await status_msg.edit_text(
             f"❌ Ошибка отправки кода:\n<code>{str(e)}</code>\n\n"
-            f"Попробуй другой email или используй ручной ввод aimsid: /auth",
+            f"Попробуйте другой email: /auth\n\n"
+            f"При повторении ошибки обратитесь: <code>{SUPPORT_CONTACT}</code>",
             parse_mode="HTML"
         )
 
 
 @router.message(AuthStates.waiting_code)
 async def process_code(message: Message, state: FSMContext):
-    """Обработка кода — получение aimsid"""
+    """Обработка кода — получение сессии"""
     code = message.text.strip()
     data = await state.get_data()
     email = data.get("auth_email")
@@ -246,7 +232,7 @@ async def process_code(message: Message, state: FSMContext):
     except:
         pass
 
-    status_msg = await message.answer("⏳ Проверяю код...")
+    status_msg = await message.answer("⏳ Проверяем код...")
 
     try:
         auth = VKTeamsAuth()
@@ -262,77 +248,16 @@ async def process_code(message: Message, state: FSMContext):
             f"✅ <b>Авторизация успешна!</b>\n\n"
             f"👤 Email: <code>{session.email}</code>\n"
             f"💬 Найдено чатов: {len(contacts)}\n\n"
-            f"Используй /chats чтобы увидеть список.",
+            f"Введите /chats для просмотра списка.",
             parse_mode="HTML"
         )
         await state.clear()
-
-    except NotImplementedError as e:
-        # Временное решение — просим aimsid вручную
-        await status_msg.edit_text(
-            f"⚠️ <b>Автоматическая авторизация пока в разработке</b>\n\n"
-            f"Пожалуйста, скопируй aimsid из браузера:\n"
-            f"1. Открой https://myteam.mail.ru\n"
-            f"2. Войди с кодом {code}\n"
-            f"3. F12 → Network → любой запрос\n"
-            f"4. Скопируй <code>x-teams-aimsid</code>\n\n"
-            f"И отправь его мне:",
-            parse_mode="HTML"
-        )
-        await state.set_state(AuthStates.waiting_aimsid)
 
     except Exception as e:
         await status_msg.edit_text(
             f"❌ Ошибка авторизации:\n<code>{str(e)}</code>\n\n"
-            f"Попробуй ещё раз: /auth",
-            parse_mode="HTML"
-        )
-
-
-@router.message(AuthStates.waiting_aimsid)
-async def process_aimsid(message: Message, state: FSMContext):
-    """Обработка введённого aimsid"""
-    aimsid = message.text.strip()
-
-    # Базовая валидация
-    if not aimsid or ":" not in aimsid:
-        await message.answer(
-            "❌ Неверный формат aimsid.\n"
-            "Должен быть вида: <code>010.XXX.XXX:email@domain.com</code>",
-            parse_mode="HTML"
-        )
-        return
-
-    # Удаляем сообщение с токеном (безопасность)
-    try:
-        await message.delete()
-    except:
-        pass
-
-    # Создаём сессию
-    session = VKTeamsAuth.create_session_from_aimsid(aimsid)
-    user_sessions[message.from_user.id] = session
-
-    # Проверяем работоспособность
-    status_msg = await message.answer("⏳ Проверяю подключение...")
-
-    try:
-        client = VKTeamsClient(session)
-        contacts = await client.get_contact_list()
-
-        await status_msg.edit_text(
-            f"✅ <b>Авторизация успешна!</b>\n\n"
-            f"👤 Email: <code>{session.email}</code>\n"
-            f"💬 Найдено чатов: {len(contacts)}\n\n"
-            f"Используй /chats чтобы увидеть список.",
-            parse_mode="HTML"
-        )
-        await state.clear()
-
-    except Exception as e:
-        await status_msg.edit_text(
-            f"❌ Ошибка подключения:\n<code>{str(e)}</code>\n\n"
-            f"Проверь aimsid и попробуй снова: /auth",
+            f"Попробуйте ещё раз: /auth\n\n"
+            f"При повторении ошибки обратитесь: <code>{SUPPORT_CONTACT}</code>",
             parse_mode="HTML"
         )
 
@@ -343,25 +268,23 @@ async def cmd_chats(message: Message, state: FSMContext):
     session = user_sessions.get(message.from_user.id)
 
     if not session:
-        await message.answer("❌ Сначала авторизуйся: /auth")
+        await message.answer("❌ Сначала авторизуйтесь: /auth")
         return
 
-    status_msg = await message.answer("⏳ Загружаю список чатов...")
+    status_msg = await message.answer("⏳ Загружаем список чатов...")
 
     try:
         client = VKTeamsClient(session)
         contacts = await client.get_contact_list()
 
         if not contacts:
-            await status_msg.edit_text("📭 У тебя нет чатов")
+            await status_msg.edit_text("📭 Чаты не найдены")
             return
 
         # Разделяем на группы и личные чаты (без безымянных дублей)
         all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "") and not is_unnamed_chat(c)]
-        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c)]
-
-        # Считаем скрытые безымянные
-        unnamed_count = len([c for c in contacts if is_unnamed_chat(c)])
+        # Личные чаты - только те, где есть сообщения (lastMsgId присутствует)
+        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c) and c.get("lastMsgId")]
 
         # Фильтруем скрытые (ДР, свадьба и т.п.) из обеих категорий
         hidden_groups = [c for c in all_groups if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
@@ -383,13 +306,11 @@ async def cmd_chats(message: Message, state: FSMContext):
         keyboard = build_chats_keyboard(groups, [], page=0, mode="groups", has_hidden=len(hidden) > 0)
 
         hidden_text = f"\n🎂 Скрытых (ДР/свадьба): {len(hidden)}" if hidden else ""
-        unnamed_text = f"\n🚫 Безымянных (дубли): {unnamed_count}" if unnamed_count else ""
-        shown_text = f"(показано {min(50, len(groups))} из {len(groups)})" if len(groups) > 50 else ""
 
         await status_msg.edit_text(
-            f"👥 <b>Групповые чаты</b> ({len(groups)} шт.) {shown_text}\n"
-            f"👤 Личных переписок: {len(private)}{hidden_text}{unnamed_text}\n\n"
-            f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
+            f"👥 <b>Групповые чаты</b> ({len(groups)} шт.)\n"
+            f"👤 Личных переписок: {len(private)}{hidden_text}\n\n"
+            f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -397,7 +318,11 @@ async def cmd_chats(message: Message, state: FSMContext):
         await state.set_state(ExportStates.selecting_chats)
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        await status_msg.edit_text(
+            f"❌ Ошибка: {e}\n\n"
+            f"При повторении обратитесь: <code>{SUPPORT_CONTACT}</code>",
+            parse_mode="HTML"
+        )
 
 
 def build_chats_keyboard(
@@ -462,11 +387,11 @@ def build_chats_keyboard(
     if mode == "groups":
         nav_row.append(InlineKeyboardButton(text="👤 Личные чаты", callback_data="show_private"))
         if has_hidden:
-            nav_row.append(InlineKeyboardButton(text="🎂 Скрытые (ДР)", callback_data="show_hidden"))
+            nav_row.append(InlineKeyboardButton(text="🎂 Скрытые", callback_data="show_hidden"))
     elif mode == "private":
         nav_row.append(InlineKeyboardButton(text="👥 Группы", callback_data="show_groups"))
         if has_hidden:
-            nav_row.append(InlineKeyboardButton(text="🎂 Скрытые (ДР)", callback_data="show_hidden"))
+            nav_row.append(InlineKeyboardButton(text="🎂 Скрытые", callback_data="show_hidden"))
     elif mode == "hidden":
         nav_row.append(InlineKeyboardButton(text="👥 Группы", callback_data="show_groups"))
         nav_row.append(InlineKeyboardButton(text="👤 Личные", callback_data="show_private"))
@@ -521,13 +446,13 @@ async def show_private_chats(callback: CallbackQuery, state: FSMContext):
 
     keyboard = build_chats_keyboard(private, selected, page=0, mode="private", has_hidden=len(hidden) > 0, search_query=search_query)
 
-    hidden_text = f"\n🎂 Скрытых (ДР): {len(hidden)}" if hidden else ""
+    hidden_text = f"\n🎂 Скрытых: {len(hidden)}" if hidden else ""
     search_text = f"\n🔍 Фильтр: «{search_query}»" if search_query else ""
 
     try:
         await callback.message.edit_text(
             f"👤 <b>Личные чаты</b> ({len(private)} шт.){hidden_text}{search_text}\n\n"
-            f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
+            f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -550,14 +475,14 @@ async def show_group_chats(callback: CallbackQuery, state: FSMContext):
 
     keyboard = build_chats_keyboard(groups, selected, page=0, mode="groups", has_hidden=len(hidden) > 0, search_query=search_query)
 
-    hidden_text = f"\n🎂 Скрытых (ДР): {len(hidden)}" if hidden else ""
+    hidden_text = f"\n🎂 Скрытых: {len(hidden)}" if hidden else ""
     search_text = f"\n🔍 Фильтр: «{search_query}»" if search_query else ""
 
     try:
         await callback.message.edit_text(
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.)\n"
             f"👤 Личных переписок: {len(private)}{hidden_text}{search_text}\n\n"
-            f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
+            f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -568,7 +493,7 @@ async def show_group_chats(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "show_hidden")
 async def show_hidden_chats(callback: CallbackQuery, state: FSMContext):
-    """Показать скрытые чаты (ДР, день рождения)"""
+    """Показать скрытые чаты (ДР, свадьба, поздравления)"""
     data = await state.get_data()
     hidden = data.get("hidden", [])
     selected = user_selected_chats.get(callback.from_user.id, [])
@@ -583,8 +508,8 @@ async def show_hidden_chats(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             f"🎂 <b>Скрытые чаты</b> ({len(hidden)} шт.)\n"
-            f"<i>Чаты с «ДР» или «день рождения» в названии</i>{search_text}\n\n"
-            f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
+            f"<i>ДР, свадьбы, поздравления</i>{search_text}\n\n"
+            f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -720,7 +645,7 @@ async def start_search(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.answer(
         "🔍 <b>Поиск по чатам</b>\n\n"
-        "Введи текст для поиска:",
+        "Введите текст для поиска:",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
@@ -772,7 +697,7 @@ async def process_search_query(message: Message, state: FSMContext):
     search_query = message.text.strip()
 
     if not search_query:
-        await message.answer("❌ Введи текст для поиска")
+        await message.answer("❌ Введите текст для поиска")
         return
 
     user_search_query[user_id] = search_query
@@ -805,7 +730,7 @@ async def process_search_query(message: Message, state: FSMContext):
         f"{title}\n"
         f"🔍 Найдено: {filtered_count} из {len(chats)}\n"
         f"Фильтр: «{search_query}»\n\n"
-        f"Выбери чаты (⬜→☑️) и нажми «Экспорт»",
+        f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -819,16 +744,16 @@ async def do_export(callback: CallbackQuery, state: FSMContext):
     selected = user_selected_chats.get(user_id, [])
 
     if not session:
-        await callback.answer("❌ Сессия истекла, авторизуйся заново: /auth", show_alert=True)
+        await callback.answer("❌ Сессия истекла, авторизуйтесь заново: /auth", show_alert=True)
         return
 
     if not selected:
-        await callback.answer("❌ Сначала выбери чаты для экспорта!", show_alert=True)
+        await callback.answer("❌ Сначала выберите чаты для экспорта!", show_alert=True)
         return
 
     # Проверяем, не идёт ли уже экспорт
     if user_exporting.get(user_id):
-        await callback.answer("⏳ Экспорт уже выполняется! Дождись завершения.", show_alert=True)
+        await callback.answer("⏳ Экспорт уже выполняется! Дождитесь завершения.", show_alert=True)
         return
 
     await callback.answer()
@@ -842,7 +767,7 @@ async def do_export(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"📥 <b>Экспорт {len(selected)} чатов</b>\n\n"
-        f"Выбери формат:",
+        f"Выберите формат:",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
@@ -866,9 +791,11 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     # Устанавливаем блокировку
     user_exporting[user_id] = True
 
+    total = len(selected)
     status_msg = await callback.message.edit_text(
-        f"⏳ <b>Экспортирую {len(selected)} чатов...</b>\n\n"
-        f"Это может занять несколько минут.",
+        f"⏳ <b>Экспорт чатов</b>\n\n"
+        f"{make_progress_bar(0, total)}\n\n"
+        f"Подготовка...",
         parse_mode="HTML"
     )
 
@@ -876,27 +803,37 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     all_exports = []
     errors = []
     critical_error = None
+    last_update = 0
 
     try:
         for i, sn in enumerate(selected):
             try:
-                # Обновляем статус
-                try:
-                    await status_msg.edit_text(
-                        f"⏳ <b>Экспорт [{i + 1}/{len(selected)}]</b>\n\n"
-                        f"📥 {sn}\n"
-                        f"Загружено чатов: {len(all_exports)}",
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
+                # Обновляем статус каждые 2 чата или в начале
+                if i - last_update >= 2 or i == 0:
+                    try:
+                        # Получаем название чата для отображения
+                        data = await state.get_data()
+                        all_chats = data.get("contacts", [])
+                        chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
+                        chat_name = chat_info.get("name") or chat_info.get("friendly") or sn
+                        chat_name = chat_name[:35] + "..." if len(chat_name) > 35 else chat_name
+
+                        await status_msg.edit_text(
+                            f"⏳ <b>Экспорт чатов</b>\n\n"
+                            f"{make_progress_bar(i, total)}\n\n"
+                            f"📥 {chat_name}",
+                            parse_mode="HTML"
+                        )
+                        last_update = i
+                    except Exception:
+                        pass
 
                 # Экспортируем чат
                 export_data = await client.export_chat(sn)
                 all_exports.append(export_data)
 
                 # Пауза между чатами
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
 
             except Exception as e:
                 errors.append(f"{sn}: {str(e)}")
@@ -956,14 +893,21 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     if critical_error:
         error_text = f"\n\n❌ Критическая ошибка: {critical_error}"
     if errors:
-        error_text += f"\n\n⚠️ Ошибки ({len(errors)}):\n" + "\n".join(errors[:10])
+        error_text += f"\n\n⚠️ Ошибки ({len(errors)}):\n" + "\n".join(errors[:5])
+        if len(errors) > 5:
+            error_text += f"\n... и ещё {len(errors) - 5}"
 
     total_msgs = sum(e.get('total_messages', 0) for e in all_exports)
+
+    support_text = ""
+    if critical_error or errors:
+        support_text = f"\n\nПри проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>"
+
     await callback.message.answer(
-        f"{'✅' if not critical_error else '⚠️'} <b>Готово!</b>\n\n"
-        f"📊 Экспортировано чатов: {len(all_exports)} из {len(selected)}\n"
+        f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"
+        f"📊 Экспортировано: {len(all_exports)} из {len(selected)} чатов\n"
         f"📝 Всего сообщений: {total_msgs}"
-        f"{error_text}",
+        f"{error_text}{support_text}",
         parse_mode="HTML"
     )
 
@@ -984,13 +928,22 @@ async def cmd_export(message: Message):
 
 async def main():
     if not config.TG_BOT_TOKEN:
-        print("❌ Установи TG_BOT_TOKEN в .env файле!")
+        print("❌ Установите TG_BOT_TOKEN в .env файле!")
         print("   Получить токен: @BotFather в Telegram")
         return
 
     bot = Bot(token=config.TG_BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
+
+    # Устанавливаем команды бота (меню)
+    commands = [
+        BotCommand(command="start", description="Начало работы"),
+        BotCommand(command="auth", description="Авторизация"),
+        BotCommand(command="chats", description="Список чатов"),
+        BotCommand(command="help", description="Справка"),
+    ]
+    await bot.set_my_commands(commands)
 
     print("🚀 Бот запущен!")
     print("   Остановка: Ctrl+C")

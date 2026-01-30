@@ -23,15 +23,31 @@ def format_as_html(data: dict) -> str:
         messages = chat.get("messages", [])
         total_messages += len(messages)
 
+        # Собираем информацию об участниках из сообщений
+        chat_members = {}
+        for msg in messages:
+            sender_sn = (
+                msg.get("chat", {}).get("sender") or
+                msg.get("senderSn") or
+                msg.get("sn") or
+                msg.get("sender") or
+                ""
+            )
+            if sender_sn and sender_sn not in chat_members:
+                chat_members[sender_sn] = {
+                    "friendly": msg.get("senderNick") or msg.get("friendly") or "",
+                    "sn": sender_sn
+                }
+
         messages_html = ""
         for msg in messages:
-            messages_html += render_message(msg)
+            messages_html += render_message(msg, chat_members=chat_members)
 
         # Закреплённые сообщения
         pinned_html = ""
         pinned = chat.get("pinned_messages", [])
         if pinned:
-            pinned_items = "".join(render_message(m, pinned=True) for m in pinned)
+            pinned_items = "".join(render_message(m, pinned=True, chat_members=chat_members) for m in pinned)
             pinned_html = f'''
             <div class="pinned-section">
                 <h3>📌 Закреплённые ({len(pinned)})</h3>
@@ -305,15 +321,35 @@ def format_as_html(data: dict) -> str:
 </html>'''
 
 
-def render_message(msg: dict, pinned: bool = False) -> str:
+def render_message(msg: dict, pinned: bool = False, chat_members: dict = None) -> str:
     """Рендер одного сообщения в HTML"""
     is_outgoing = msg.get("outgoing", False)
-    sender = escape(
+
+    # Определяем отправителя
+    sender_sn = (
         msg.get("chat", {}).get("sender") or
-        msg.get("senderNick") or
+        msg.get("senderSn") or
+        msg.get("sn") or
         msg.get("sender") or
-        "Unknown"
+        ""
     )
+
+    # Пытаемся найти имя по sn в списке участников
+    sender_name = msg.get("senderNick") or msg.get("friendly") or ""
+
+    # Если есть словарь участников, ищем там
+    if chat_members and sender_sn:
+        member_info = chat_members.get(sender_sn, {})
+        sender_name = member_info.get("friendly") or member_info.get("name") or sender_name
+
+    # Если имя не найдено, показываем email (до @)
+    if not sender_name and sender_sn:
+        if "@" in sender_sn:
+            sender_name = sender_sn.split("@")[0]
+        else:
+            sender_name = sender_sn
+
+    sender = escape(sender_name or "Неизвестный")
 
     # Время
     timestamp = msg.get("time", 0)
