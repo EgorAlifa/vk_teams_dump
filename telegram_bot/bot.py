@@ -327,8 +327,10 @@ async def cmd_chats(message: Message, state: FSMContext):
 
         # Разделяем на группы и личные чаты (без безымянных дублей)
         all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "") and not is_unnamed_chat(c)]
-        # Личные чаты - только те, где есть переписка (has_messages из histDlgState)
-        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c) and c.get("has_messages")]
+        # Личные чаты - все контакты из buddylist (не только с has_messages)
+        # Сортируем: сначала с перепиской, потом остальные
+        all_private_unsorted = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c)]
+        all_private = sorted(all_private_unsorted, key=lambda c: (not c.get("has_messages", False), c.get("name", "").lower()))
 
         # Фильтруем скрытые (ДР, свадьба и т.п.) из обеих категорий
         hidden_groups = [c for c in all_groups if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
@@ -338,7 +340,8 @@ async def cmd_chats(message: Message, state: FSMContext):
         groups = [c for c in all_groups if not is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
         private = [c for c in all_private if not is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
 
-        # Count blocked users
+        # Count stats
+        with_messages_count = len([c for c in private if c.get("has_messages")])
         blocked_count = len([c for c in all_private if c.get("is_blocked")])
 
         # Сохраняем для выбора (сначала группы)
@@ -358,7 +361,7 @@ async def cmd_chats(message: Message, state: FSMContext):
         await safe_edit_text(
             status_msg,
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.)\n"
-            f"👤 Личных переписок: {len(private)}{blocked_text}{hidden_text}\n\n"
+            f"👤 Личных: {len(private)} (💬 с перепиской: {with_messages_count}){blocked_text}{hidden_text}\n\n"
             f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
