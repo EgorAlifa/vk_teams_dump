@@ -19,9 +19,11 @@ def format_as_html(data: dict) -> str:
     total_messages = 0
 
     for chat in data.get("chats", []):
-        chat_name = escape(chat.get("chat_name", chat.get("chat_sn", "Чат")))
+        chat_sn = chat.get("chat_sn", "")
+        chat_name = escape(chat.get("chat_name", chat_sn or "Чат"))
         messages = chat.get("messages", [])
         total_messages += len(messages)
+        is_personal = "@chat.agent" not in chat_sn
 
         # Собираем информацию об участниках из сообщений
         chat_members = {}
@@ -41,13 +43,13 @@ def format_as_html(data: dict) -> str:
 
         messages_html = ""
         for msg in messages:
-            messages_html += render_message(msg, chat_members=chat_members)
+            messages_html += render_message(msg, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal)
 
         # Закреплённые сообщения
         pinned_html = ""
         pinned = chat.get("pinned_messages", [])
         if pinned:
-            pinned_items = "".join(render_message(m, pinned=True, chat_members=chat_members) for m in pinned)
+            pinned_items = "".join(render_message(m, pinned=True, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal) for m in pinned)
             pinned_html = f'''
             <div class="pinned-section">
                 <h3>📌 Закреплённые ({len(pinned)})</h3>
@@ -56,7 +58,7 @@ def format_as_html(data: dict) -> str:
             '''
 
         chats_html += f'''
-        <div class="chat-section" id="chat-{escape(chat.get('chat_sn', ''))}">
+        <div class="chat-section" id="chat-{escape(chat_sn)}">
             <h2 class="chat-title">💬 {chat_name}</h2>
             <div class="chat-meta">
                 📊 Сообщений: {len(messages)}
@@ -276,7 +278,21 @@ def format_as_html(data: dict) -> str:
         @media (max-width: 768px) {{
             .nav {{ display: none; }}
             .container {{ display: block; }}
+            .header {{ padding: 15px; }}
+            .header h1 {{ font-size: 18px; }}
+            .search-box {{ display: flex; gap: 8px; }}
+            .search-box input {{ flex: 1; max-width: none; }}
+            .search-btn {{
+                padding: 10px 15px;
+                background: var(--accent);
+                color: white;
+                border: none;
+                border-radius: 20px;
+                cursor: pointer;
+            }}
+            .message {{ margin: 6px 5px; max-width: 95%; }}
         }}
+        .link {{ color: var(--accent); }}
     </style>
 </head>
 <body>
@@ -286,8 +302,10 @@ def format_as_html(data: dict) -> str:
             📅 {export_date[:10]} · 💬 {len(data.get('chats', []))} чатов · 📨 {total_messages} сообщений
         </div>
         <div class="search-box">
-            <input type="text" id="search" placeholder="🔍 Поиск по сообщениям..." autocomplete="off">
+            <input type="text" id="search" placeholder="🔍 Поиск..." autocomplete="off">
+            <button class="search-btn" onclick="doSearch()">🔍</button>
         </div>
+        <div id="search-results" style="margin-top:10px;font-size:13px;color:var(--text-secondary);"></div>
     </div>
 
     <div class="container">
@@ -302,12 +320,28 @@ def format_as_html(data: dict) -> str:
 
     <script>
         const searchInput = document.getElementById('search');
-        searchInput.addEventListener('input', (e) => {{
-            const q = e.target.value.toLowerCase().trim();
+        const searchResults = document.getElementById('search-results');
+
+        function doSearch() {{
+            const q = searchInput.value.toLowerCase().trim();
+            let found = 0, total = 0;
             document.querySelectorAll('.message').forEach(msg => {{
+                total++;
                 const text = msg.textContent.toLowerCase();
-                msg.classList.toggle('hidden', q && !text.includes(q));
+                const match = !q || text.includes(q);
+                msg.classList.toggle('hidden', q && !match);
+                if (q && match) found++;
             }});
+            if (q) {{
+                searchResults.textContent = `Найдено: ${{found}} из ${{total}}`;
+            }} else {{
+                searchResults.textContent = '';
+            }}
+        }}
+
+        searchInput.addEventListener('input', doSearch);
+        searchInput.addEventListener('keydown', (e) => {{
+            if (e.key === 'Enter') doSearch();
         }});
 
         document.addEventListener('keydown', (e) => {{
@@ -321,7 +355,7 @@ def format_as_html(data: dict) -> str:
 </html>'''
 
 
-def render_message(msg: dict, pinned: bool = False, chat_members: dict = None) -> str:
+def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, chat_sn: str = "", is_personal: bool = False) -> str:
     """Рендер одного сообщения в HTML"""
     is_outgoing = msg.get("outgoing", False)
 
@@ -334,17 +368,25 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None) -
         ""
     )
 
-    # Пытаемся найти имя по sn в списке участников
-    sender_name = msg.get("senderNick") or msg.get("friendly") or ""
+    # Для личных чатов определяем отправителя по outgoing
+    if is_personal:
+        if is_outgoing:
+            sender_name = "Вы"
+        else:
+            # Входящее сообщение - от собеседника (chat_sn)
+            sender_name = chat_sn
+    else:
+        # Групповой чат - ищем имя отправителя
+        sender_name = msg.get("senderNick") or msg.get("friendly") or ""
 
-    # Если есть словарь участников, ищем там
-    if chat_members and sender_sn:
-        member_info = chat_members.get(sender_sn, {})
-        sender_name = member_info.get("friendly") or member_info.get("name") or sender_name
+        # Если есть словарь участников, ищем там
+        if chat_members and sender_sn:
+            member_info = chat_members.get(sender_sn, {})
+            sender_name = member_info.get("friendly") or member_info.get("name") or sender_name
 
-    # Если имя не найдено, показываем полный email/sn
-    if not sender_name and sender_sn:
-        sender_name = sender_sn
+        # Если имя не найдено, показываем полный email/sn
+        if not sender_name and sender_sn:
+            sender_name = sender_sn
 
     sender = escape(sender_name or "Неизвестный")
 

@@ -803,37 +803,35 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     all_exports = []
     errors = []
     critical_error = None
-    last_update = 0
+
+    # Получаем данные о чатах заранее
+    state_data = await state.get_data()
+    all_chats = state_data.get("contacts", [])
 
     try:
         for i, sn in enumerate(selected):
             try:
-                # Обновляем статус каждые 2 чата или в начале
-                if i - last_update >= 2 or i == 0:
-                    try:
-                        # Получаем название чата для отображения
-                        data = await state.get_data()
-                        all_chats = data.get("contacts", [])
-                        chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
-                        chat_name = chat_info.get("name") or chat_info.get("friendly") or sn
-                        chat_name = chat_name[:35] + "..." if len(chat_name) > 35 else chat_name
+                # Обновляем статус перед каждым чатом
+                try:
+                    chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
+                    chat_name = chat_info.get("name") or chat_info.get("friendly") or sn
+                    chat_name = chat_name[:35] + "..." if len(chat_name) > 35 else chat_name
 
-                        await status_msg.edit_text(
-                            f"⏳ <b>Экспорт чатов</b>\n\n"
-                            f"{make_progress_bar(i, total)}\n\n"
-                            f"📥 {chat_name}",
-                            parse_mode="HTML"
-                        )
-                        last_update = i
-                    except Exception:
-                        pass
+                    await status_msg.edit_text(
+                        f"⏳ <b>Экспорт чатов</b>\n\n"
+                        f"{make_progress_bar(i + 1, total)}\n\n"
+                        f"📥 {chat_name}",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
 
                 # Экспортируем чат
                 export_data = await client.export_chat(sn)
                 all_exports.append(export_data)
 
-                # Пауза между чатами
-                await asyncio.sleep(0.5)
+                # Небольшая пауза между чатами
+                await asyncio.sleep(0.3)
 
             except Exception as e:
                 errors.append(f"{sn}: {str(e)}")
