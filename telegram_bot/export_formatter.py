@@ -342,12 +342,9 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None) -
         member_info = chat_members.get(sender_sn, {})
         sender_name = member_info.get("friendly") or member_info.get("name") or sender_name
 
-    # Если имя не найдено, показываем email (до @)
+    # Если имя не найдено, показываем полный email/sn
     if not sender_name and sender_sn:
-        if "@" in sender_sn:
-            sender_name = sender_sn.split("@")[0]
-        else:
-            sender_name = sender_sn
+        sender_name = sender_sn
 
     sender = escape(sender_name or "Неизвестный")
 
