@@ -96,6 +96,59 @@ install_pip_fallback() {
     export PATH="$HOME/.local/bin:$PATH"
 }
 
+# Установка Docker
+install_docker() {
+    echo -e "${YELLOW}🐳 Устанавливаю Docker...${NC}"
+
+    case $PKG_MANAGER in
+        apt)
+            # Удаляем старые версии
+            $SUDO apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+            # Устанавливаем зависимости
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq ca-certificates curl gnupg
+
+            # Добавляем GPG ключ Docker
+            $SUDO install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+            $SUDO chmod a+r /etc/apt/keyrings/docker.gpg
+
+            # Добавляем репозиторий
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | $SUDO tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+            # Устанавливаем Docker
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            ;;
+        dnf)
+            $SUDO dnf install -y dnf-plugins-core
+            $SUDO dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+            $SUDO dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            ;;
+        yum)
+            $SUDO yum install -y yum-utils
+            $SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            $SUDO yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            ;;
+        *)
+            echo -e "${RED}Автоустановка Docker не поддерживается для этой системы${NC}"
+            echo "Установите Docker вручную: https://docs.docker.com/engine/install/"
+            return 1
+            ;;
+    esac
+
+    # Запускаем Docker
+    $SUDO systemctl start docker
+    $SUDO systemctl enable docker
+
+    # Добавляем пользователя в группу docker
+    $SUDO usermod -aG docker $USER
+
+    echo -e "${GREEN}✓ Docker установлен${NC}"
+    echo -e "${YELLOW}⚠ Для работы без sudo перезайдите в сессию или выполните: newgrp docker${NC}"
+}
+
 #############################################
 # 1. Проверка и установка Python
 #############################################
@@ -289,12 +342,27 @@ EOF
 chmod +x run.sh
 
 #############################################
-# Проверяем Docker и запускаем контейнер
+# 6. Проверяем и устанавливаем Docker
 #############################################
-echo ""
+echo -e "\n${BLUE}[6/6] Проверяю Docker...${NC}"
 
-if command -v docker &> /dev/null && docker info &> /dev/null; then
-    echo -e "${BLUE}[6/6] Docker найден, создаю контейнер...${NC}"
+# Устанавливаем Docker если нет
+if ! command -v docker &> /dev/null; then
+    echo -e "${YELLOW}Docker не найден, устанавливаю...${NC}"
+    install_docker
+fi
+
+# Запускаем Docker если не запущен
+if ! docker info &> /dev/null 2>&1; then
+    echo -e "${YELLOW}Запускаю Docker...${NC}"
+    $SUDO systemctl start docker 2>/dev/null || true
+    sleep 2
+fi
+
+# Проверяем ещё раз
+if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Docker работает${NC}"
+    echo -e "${BLUE}Создаю контейнер...${NC}"
 
     # Останавливаем старый контейнер если есть
     docker compose down 2>/dev/null || true
@@ -335,8 +403,12 @@ if command -v docker &> /dev/null && docker info &> /dev/null; then
         echo "Попробуйте вручную: docker compose up -d"
     fi
 else
-    echo -e "${YELLOW}⚠ Docker не найден или не запущен${NC}"
-    echo "Бот будет работать локально (без контейнера)"
+    echo -e "${YELLOW}⚠ Docker не удалось запустить${NC}"
+    echo -e "${YELLOW}Возможно нужно перезайти в сессию (для группы docker)${NC}"
+    echo ""
+    echo "Попробуйте:"
+    echo "  1. Выйти и зайти заново (или: newgrp docker)"
+    echo "  2. Запустить: docker compose up -d"
 fi
 
 #############################################
