@@ -474,6 +474,57 @@ def format_as_html(data: dict) -> str:
         }}
         .msg-file a:hover {{ text-decoration: underline; }}
 
+        /* Search Results */
+        .search-results {{
+            flex: 1;
+            flex-direction: column;
+            background: var(--sidebar-bg);
+            overflow: hidden;
+        }}
+        .search-results-header {{
+            padding: 15px 20px;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 16px;
+        }}
+        .search-results-list {{
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }}
+        .search-result-item {{
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+        }}
+        .search-result-item:hover {{
+            background: var(--hover);
+        }}
+        .search-result-chat {{
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--accent);
+            margin-bottom: 4px;
+        }}
+        .search-result-sender {{
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }}
+        .search-result-text {{
+            font-size: 14px;
+            line-height: 1.4;
+        }}
+        .search-result-text mark {{
+            background: #ffeb3b;
+            color: #000;
+            padding: 1px 2px;
+            border-radius: 2px;
+        }}
+        .date-separator.hidden {{ display: none; }}
+
         /* Mobile */
         @media (max-width: 768px) {{
             .sidebar {{ width: 100%; position: absolute; z-index: 10; }}
@@ -509,6 +560,7 @@ def format_as_html(data: dict) -> str:
             <div class="chat-placeholder" id="placeholder">
                 Выберите чат для просмотра
             </div>
+            <div class="search-results" id="searchResults" style="display:none;"></div>
             {chats_content_html}
         </div>
     </div>
@@ -521,6 +573,9 @@ def format_as_html(data: dict) -> str:
             // Убираем выделение со всех
             document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.chat-content').forEach(el => el.style.display = 'none');
+
+            // Скрываем результаты глобального поиска
+            document.getElementById('searchResults').style.display = 'none';
 
             // Выделяем выбранный
             document.querySelectorAll('.chat-item')[idx].classList.add('active');
@@ -562,9 +617,12 @@ def format_as_html(data: dict) -> str:
 
         function searchInChat(idx, query) {{
             const q = query.toLowerCase().trim();
-            const messages = document.querySelectorAll('#messages-' + idx + ' .message');
+            const container = document.getElementById('messages-' + idx);
+            const messages = container.querySelectorAll('.message');
+            const dateSeparators = container.querySelectorAll('.date-separator');
             let found = 0;
 
+            // Сначала обрабатываем сообщения
             messages.forEach(msg => {{
                 const text = msg.textContent.toLowerCase();
                 const match = !q || text.includes(q);
@@ -573,30 +631,115 @@ def format_as_html(data: dict) -> str:
                 if (q && match) found++;
             }});
 
+            // Скрываем разделители дат, если вокруг них нет видимых сообщений
+            dateSeparators.forEach(sep => {{
+                if (!q) {{
+                    sep.classList.remove('hidden');
+                    return;
+                }}
+                // Проверяем есть ли видимые сообщения после этого разделителя до следующего
+                let hasVisibleMessages = false;
+                let next = sep.nextElementSibling;
+                while (next && !next.classList.contains('date-separator')) {{
+                    if (next.classList.contains('message') && !next.classList.contains('hidden')) {{
+                        hasVisibleMessages = true;
+                        break;
+                    }}
+                    next = next.nextElementSibling;
+                }}
+                sep.classList.toggle('hidden', !hasVisibleMessages);
+            }});
+
             document.getElementById('search-count-' + idx).textContent = q ? `Найдено: ${{found}}` : '';
         }}
 
         function globalSearchHandler() {{
             const query = document.getElementById('globalSearch').value.toLowerCase().trim();
             const mode = document.querySelector('input[name="searchMode"]:checked').value;
+            const resultsContainer = document.getElementById('searchResults');
+            const placeholder = document.getElementById('placeholder');
+
+            // Сброс глобального поиска
+            if (!query) {{
+                document.querySelectorAll('.chat-item').forEach(item => item.classList.remove('hidden'));
+                resultsContainer.style.display = 'none';
+                resultsContainer.innerHTML = '';
+                if (currentChat < 0) placeholder.style.display = 'flex';
+                return;
+            }}
 
             if (mode === 'chats') {{
                 // Поиск по названиям чатов
+                resultsContainer.style.display = 'none';
+                if (currentChat < 0) placeholder.style.display = 'flex';
                 document.querySelectorAll('.chat-item').forEach(item => {{
                     const name = item.querySelector('.chat-item-name').textContent.toLowerCase();
-                    item.classList.toggle('hidden', query && !name.includes(query));
+                    item.classList.toggle('hidden', !name.includes(query));
                 }});
             }} else {{
-                // Поиск по сообщениям во всех чатах
+                // Поиск по сообщениям - показываем результаты справа
+                placeholder.style.display = 'none';
+                document.querySelectorAll('.chat-content').forEach(el => el.style.display = 'none');
+
+                let resultsHtml = '<div class="search-results-header">🔍 Результаты поиска</div><div class="search-results-list">';
+                let totalFound = 0;
+
                 document.querySelectorAll('.chat-item').forEach((item, idx) => {{
+                    const chatName = item.querySelector('.chat-item-name').textContent;
                     const messages = document.querySelectorAll('#messages-' + idx + ' .message');
-                    let hasMatch = false;
+                    let chatHasMatch = false;
+
                     messages.forEach(msg => {{
                         const text = msg.textContent.toLowerCase();
-                        if (!query || text.includes(query)) hasMatch = true;
+                        if (text.includes(query)) {{
+                            chatHasMatch = true;
+                            totalFound++;
+                            const msgText = msg.querySelector('.msg-text');
+                            const msgTime = msg.querySelector('.msg-time');
+                            const msgSender = msg.querySelector('.msg-sender');
+
+                            const textPreview = msgText ? msgText.textContent.substring(0, 150) : '...';
+                            const time = msgTime ? msgTime.textContent : '';
+                            const sender = msgSender ? msgSender.textContent : '';
+
+                            resultsHtml += `
+                                <div class="search-result-item" onclick="goToMessage(${{idx}}, '${{msg.getAttribute('data-msgid') || ''}}')">
+                                    <div class="search-result-chat">${{chatName}}</div>
+                                    <div class="search-result-sender">${{sender}} ${{time}}</div>
+                                    <div class="search-result-text">${{highlightText(textPreview, query)}}</div>
+                                </div>
+                            `;
+                        }}
                     }});
-                    item.classList.toggle('hidden', query && !hasMatch);
+
+                    item.classList.toggle('hidden', !chatHasMatch);
                 }});
+
+                resultsHtml += '</div>';
+                resultsHtml = resultsHtml.replace('Результаты поиска', `Результаты поиска (${{totalFound}})`);
+                resultsContainer.innerHTML = resultsHtml;
+                resultsContainer.style.display = 'flex';
+            }}
+        }}
+
+        function highlightText(text, query) {{
+            if (!query) return text;
+            const regex = new RegExp(`(${{query.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&')}})`, 'gi');
+            return text.replace(regex, '<mark>$1</mark>');
+        }}
+
+        function goToMessage(chatIdx, msgId) {{
+            selectChat(chatIdx);
+            document.getElementById('searchResults').style.display = 'none';
+
+            // Подсветить найденное сообщение
+            if (msgId) {{
+                const msg = document.querySelector(`#messages-${{chatIdx}} .message[data-msgid="${{msgId}}"]`);
+                if (msg) {{
+                    msg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    msg.classList.add('highlight');
+                    setTimeout(() => msg.classList.remove('highlight'), 2000);
+                }}
             }}
         }}
 
@@ -702,6 +845,7 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
         '''
 
     classes = "message outgoing" if is_outgoing else "message"
+    msg_id = msg.get("msgId", "")
 
     # Показываем отправителя только для входящих в группах
     sender_html = ""
@@ -709,7 +853,7 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
         sender_html = f'<div class="msg-sender">{sender}</div>'
 
     return f'''
-    <div class="{classes}">
+    <div class="{classes}" data-msgid="{msg_id}">
         {sender_html}
         {content_html}
         <div class="msg-time">{time_str}</div>
