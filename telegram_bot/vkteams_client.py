@@ -8,7 +8,7 @@ import aiohttp
 import random
 import time
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import config
 
@@ -30,6 +30,7 @@ class VKTeamsSession:
     aimsid: str
     email: str
     fetch_base_url: str = ""  # URL для fetchEvents
+    cached_contacts: Optional[list] = None  # Кеш контактов (histDlgState отдаётся только один раз)
 
 
 # =========================
@@ -122,6 +123,11 @@ class VKTeamsClient:
     async def get_contact_list(self) -> list[dict]:
         """Получить список всех чатов/контактов - комбинация из нескольких источников"""
 
+        # Проверяем кеш (histDlgState отдаётся только один раз при long-polling)
+        if self.session.cached_contacts is not None:
+            logger.info(f"Using cached contacts: {len(self.session.cached_contacts)} items")
+            return self.session.cached_contacts
+
         all_contacts = {}  # sn -> contact dict (для дедупликации)
 
         # 1. Получаем контакты через RAPI getContactList
@@ -166,6 +172,10 @@ class VKTeamsClient:
 
         contacts = list(all_contacts.values())
         logger.info(f"Total unique contacts: {len(contacts)}")
+
+        # Кешируем результат
+        self.session.cached_contacts = contacts
+
         return contacts
 
     async def _get_contact_list_rapi(self) -> list[dict]:
@@ -369,6 +379,11 @@ class VKTeamsClient:
                 await asyncio.sleep(0.1)
 
         logger.info(f"fetchEvents completed: {iteration} iterations, {total_events} total events, {hist_dlg_count} dialogs")
+
+        # Сохраняем последний fetchBaseURL для следующих вызовов
+        if next_url:
+            self.session.fetch_base_url = next_url
+            logger.debug(f"Updated session fetch_base_url to: {next_url[:60]}...")
 
         # Формируем итоговый список
         contacts = list(contacts_by_sn.values())
