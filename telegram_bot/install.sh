@@ -289,7 +289,58 @@ EOF
 chmod +x run.sh
 
 #############################################
-# Готово!
+# Проверяем Docker и запускаем контейнер
+#############################################
+echo ""
+
+if command -v docker &> /dev/null && docker info &> /dev/null; then
+    echo -e "${BLUE}[6/6] Docker найден, создаю контейнер...${NC}"
+
+    # Останавливаем старый контейнер если есть
+    docker compose down 2>/dev/null || true
+
+    # Собираем и запускаем
+    docker compose up -d --build
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Контейнер запущен${NC}"
+        echo ""
+        echo -e "${GREEN}"
+        echo "╔═══════════════════════════════════════════════════╗"
+        echo "║            ✅ Установка завершена!                ║"
+        echo "╚═══════════════════════════════════════════════════╝"
+        echo -e "${NC}"
+        echo ""
+        echo -e "Бот запущен в Docker контейнере!"
+        echo ""
+        echo -e "Команды:"
+        echo -e "  ${YELLOW}docker logs -f vkteams_export_bot${NC}  — логи бота"
+        echo -e "  ${YELLOW}docker compose down${NC}                — остановить"
+        echo -e "  ${YELLOW}docker compose up -d${NC}               — запустить"
+        echo -e "  ${YELLOW}docker compose restart${NC}             — перезапустить"
+        echo ""
+        echo -e "Дашборд статистики: ${YELLOW}http://localhost:8080${NC}"
+        echo ""
+
+        # Показываем логи
+        read -p "Показать логи бота? (Y/n): " show_logs
+        if [ "$show_logs" != "n" ] && [ "$show_logs" != "N" ]; then
+            echo ""
+            echo -e "${BLUE}Логи (Ctrl+C для выхода):${NC}"
+            docker logs -f vkteams_export_bot
+        fi
+        exit 0
+    else
+        echo -e "${RED}✗ Ошибка запуска контейнера${NC}"
+        echo "Попробуйте вручную: docker compose up -d"
+    fi
+else
+    echo -e "${YELLOW}⚠ Docker не найден или не запущен${NC}"
+    echo "Бот будет работать локально (без контейнера)"
+fi
+
+#############################################
+# Готово (без Docker)
 #############################################
 echo ""
 echo -e "${GREEN}"
@@ -309,7 +360,7 @@ echo -e "Остановка: ${YELLOW}Ctrl+C${NC}"
 echo ""
 
 #############################################
-# Спрашиваем про запуск
+# Спрашиваем про запуск (только без Docker)
 #############################################
 read -p "Запустить бота сейчас? (Y/n): " run_now
 
