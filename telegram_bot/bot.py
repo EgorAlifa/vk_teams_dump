@@ -7,6 +7,7 @@ VK Teams Export Bot для Telegram
 import asyncio
 import json
 import os
+import signal
 import tempfile
 from datetime import datetime
 from typing import Optional
@@ -24,10 +25,21 @@ from aiogram.types import (
     BotCommand,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramBadRequest
 
 import config
 from vkteams_client import VKTeamsClient, VKTeamsAuth, VKTeamsSession
 from export_formatter import format_as_html, format_as_json
+
+# Stats tracking (lightweight)
+try:
+    from stats import log_event, update_active_user, get_active_user_ids
+    STATS_ENABLED = True
+except ImportError:
+    STATS_ENABLED = False
+    def log_event(*args, **kwargs): pass
+    def update_active_user(*args, **kwargs): pass
+    def get_active_user_ids(): return []
 
 # Роутер для хэндлеров
 router = Router()
@@ -63,6 +75,24 @@ def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     filled = int(width * percent)
     bar = "█" * filled + "░" * (width - filled)
     return f"{bar} {current}/{total} ({int(percent * 100)}%)"
+
+
+async def safe_edit_text(message, text: str, **kwargs):
+    """Safely edit message, ignoring 'message not modified' error"""
+    try:
+        await message.edit_text(text, **kwargs)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
+
+
+async def safe_edit_reply_markup(message, **kwargs):
+    """Safely edit reply markup, ignoring 'message not modified' error"""
+    try:
+        await message.edit_reply_markup(**kwargs)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
 
 
 def is_hidden_chat(name: str) -> bool:
@@ -121,6 +151,9 @@ def is_unnamed_chat(chat: dict) -> bool:
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Приветствие и инструкция"""
+    log_event("start", message.from_user.id)
+    update_active_user(message.from_user.id, message.from_user.username)
+
     text = f"""
 📦 <b>VK Teams Export Bot</b>
 
@@ -203,7 +236,8 @@ async def process_email(message: Message, state: FSMContext):
         await state.update_data(auth_email=email)
         await state.set_state(AuthStates.waiting_code)
 
-        await status_msg.edit_text(
+        await safe_edit_text(
+            status_msg,
             f"✅ <b>Код отправлен!</b>\n\n"
             f"Проверьте почту <code>{email}</code>\n"
             f"и введите полученный код:",
@@ -211,7 +245,8 @@ async def process_email(message: Message, state: FSMContext):
         )
 
     except Exception as e:
-        await status_msg.edit_text(
+        await safe_edit_text(
+            status_msg,
             f"❌ Ошибка отправки кода:\n<code>{str(e)}</code>\n\n"
             f"Попробуйте другой email: /auth\n\n"
             f"При повторении ошибки обратитесь: <code>{SUPPORT_CONTACT}</code>",
@@ -244,7 +279,11 @@ async def process_code(message: Message, state: FSMContext):
         client = VKTeamsClient(session)
         contacts = await client.get_contact_list()
 
-        await status_msg.edit_text(
+        log_event("auth_success", message.from_user.id, email)
+        update_active_user(message.from_user.id, message.from_user.username, email)
+
+        await safe_edit_text(
+            status_msg,
             f"✅ <b>Авторизация успешна!</b>\n\n"
             f"👤 Email: <code>{session.email}</code>\n"
             f"💬 Найдено чатов: {len(contacts)}\n\n"
@@ -254,7 +293,9 @@ async def process_code(message: Message, state: FSMContext):
         await state.clear()
 
     except Exception as e:
-        await status_msg.edit_text(
+        log_event("auth_error", message.from_user.id, str(e))
+        await safe_edit_text(
+            status_msg,
             f"❌ Ошибка авторизации:\n<code>{str(e)}</code>\n\n"
             f"Попробуйте ещё раз: /auth\n\n"
             f"При повторении ошибки обратитесь: <code>{SUPPORT_CONTACT}</code>",
@@ -271,6 +312,9 @@ async def cmd_chats(message: Message, state: FSMContext):
         await message.answer("❌ Сначала авторизуйтесь: /auth")
         return
 
+    log_event("chats_view", message.from_user.id)
+    update_active_user(message.from_user.id, message.from_user.username)
+
     status_msg = await message.answer("⏳ Загружаем список чатов...")
 
     try:
@@ -278,7 +322,7 @@ async def cmd_chats(message: Message, state: FSMContext):
         contacts = await client.get_contact_list()
 
         if not contacts:
-            await status_msg.edit_text("📭 Чаты не найдены")
+            await safe_edit_text(status_msg, "📭 Чаты не найдены")
             return
 
         # Разделяем на группы и личные чаты (без безымянных дублей)
@@ -294,6 +338,9 @@ async def cmd_chats(message: Message, state: FSMContext):
         groups = [c for c in all_groups if not is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
         private = [c for c in all_private if not is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
 
+        # Count blocked users
+        blocked_count = len([c for c in all_private if c.get("is_blocked")])
+
         # Сохраняем для выбора (сначала группы)
         await state.update_data(contacts=contacts, groups=groups, private=private, hidden=hidden)
 
@@ -306,10 +353,12 @@ async def cmd_chats(message: Message, state: FSMContext):
         keyboard = build_chats_keyboard(groups, [], page=0, mode="groups", has_hidden=len(hidden) > 0)
 
         hidden_text = f"\n🎂 Скрытых (ДР/свадьба): {len(hidden)}" if hidden else ""
+        blocked_text = f"\n🚫 С удалёнными: {blocked_count}" if blocked_count else ""
 
-        await status_msg.edit_text(
+        await safe_edit_text(
+            status_msg,
             f"👥 <b>Групповые чаты</b> ({len(groups)} шт.)\n"
-            f"👤 Личных переписок: {len(private)}{hidden_text}\n\n"
+            f"👤 Личных переписок: {len(private)}{blocked_text}{hidden_text}\n\n"
             f"Выберите чаты (⬜→☑️) и нажмите «Экспорт»",
             reply_markup=keyboard,
             parse_mode="HTML"
@@ -318,7 +367,8 @@ async def cmd_chats(message: Message, state: FSMContext):
         await state.set_state(ExportStates.selecting_chats)
 
     except Exception as e:
-        await status_msg.edit_text(
+        await safe_edit_text(
+            status_msg,
             f"❌ Ошибка: {e}\n\n"
             f"При повторении обратитесь: <code>{SUPPORT_CONTACT}</code>",
             parse_mode="HTML"
@@ -350,7 +400,16 @@ def build_chats_keyboard(
     for chat in page_chats:
         sn = chat.get("sn", "")
         name = chat.get("name") or chat.get("friendly") or sn
-        name = name[:28] + "…" if len(name) > 28 else name
+
+        # Mark blocked/deleted users
+        is_blocked = chat.get("is_blocked", False)
+        if is_blocked:
+            # Use email as name and add indicator
+            name = sn if sn else name
+            name = name[:23] + "…" if len(name) > 23 else name
+            name = f"🚫 {name}"
+        else:
+            name = name[:28] + "…" if len(name) > 28 else name
 
         # Чекбокс
         checkbox = "☑️" if sn in selected else "⬜"
@@ -765,7 +824,8 @@ async def do_export(callback: CallbackQuery, state: FSMContext):
     builder.button(text="📦 Оба формата", callback_data="format:both")
     builder.adjust(1)
 
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"📥 <b>Экспорт {len(selected)} чатов</b>\n\n"
         f"Выберите формат:",
         reply_markup=builder.as_markup(),
@@ -787,6 +847,9 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer()
+
+    log_event("export_start", user_id, f"chats={len(selected)},format={format_type}")
+    update_active_user(user_id, callback.from_user.username)
 
     # Устанавливаем блокировку
     user_exporting[user_id] = True
@@ -812,19 +875,21 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         for i, sn in enumerate(selected):
             try:
                 # Обновляем статус перед каждым чатом
-                try:
-                    chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
-                    chat_name = chat_info.get("name") or chat_info.get("friendly") or sn
-                    chat_name = chat_name[:35] + "..." if len(chat_name) > 35 else chat_name
+                chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
+                chat_name = chat_info.get("name") or chat_info.get("friendly") or sn
+                chat_name = chat_name[:35] + "..." if len(chat_name) > 35 else chat_name
 
-                    await status_msg.edit_text(
-                        f"⏳ <b>Экспорт чатов</b>\n\n"
-                        f"{make_progress_bar(i + 1, total)}\n\n"
-                        f"📥 {chat_name}",
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
+                # Show blocked indicator
+                if chat_info.get("is_blocked"):
+                    chat_name = f"🚫 {chat_name}"
+
+                await safe_edit_text(
+                    status_msg,
+                    f"⏳ <b>Экспорт чатов</b>\n\n"
+                    f"{make_progress_bar(i + 1, total)}\n\n"
+                    f"📥 {chat_name}",
+                    parse_mode="HTML"
+                )
 
                 # Экспортируем чат
                 export_data = await client.export_chat(sn)
@@ -871,7 +936,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 
             # Отправляем файлы
             status_text = "✅ <b>Экспорт завершён!</b>" if not critical_error else "⚠️ <b>Экспорт завершён с ошибками</b>"
-            await status_msg.edit_text(
+            await safe_edit_text(
+                status_msg,
                 f"{status_text}\n\n"
                 f"📊 Чатов: {len(all_exports)}\n"
                 f"📨 Отправляю файлы...",
@@ -879,12 +945,29 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
             )
 
             for file_type, file_path in files_to_send:
-                await callback.message.answer_document(
-                    FSInputFile(file_path),
-                    caption=f"📦 VK Teams Export ({file_type.upper()})"
-                )
+                try:
+                    # Use longer timeout for large files (5 minutes)
+                    await asyncio.wait_for(
+                        callback.message.answer_document(
+                            FSInputFile(file_path),
+                            caption=f"📦 VK Teams Export ({file_type.upper()})"
+                        ),
+                        timeout=300  # 5 minutes for large files
+                    )
+                except asyncio.TimeoutError:
+                    await callback.message.answer(
+                        f"⚠️ Таймаут при отправке {file_type.upper()} файла. "
+                        f"Файл слишком большой.\n\n"
+                        f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
+                        parse_mode="HTML"
+                    )
+
     except Exception as file_err:
-        await callback.message.answer(f"❌ Ошибка при создании файлов: {file_err}")
+        await callback.message.answer(
+            f"❌ Ошибка при создании файлов: {file_err}\n\n"
+            f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
+            parse_mode="HTML"
+        )
 
     # Итоговое сообщение
     error_text = ""
@@ -900,6 +983,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     support_text = ""
     if critical_error or errors:
         support_text = f"\n\nПри проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>"
+
+    log_event("export_complete", user_id, f"chats={len(all_exports)},messages={total_msgs},errors={len(errors)}")
 
     await callback.message.answer(
         f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"
@@ -924,13 +1009,56 @@ async def cmd_export(message: Message):
 
 # ============== Main ==============
 
+# Global bot reference for shutdown handler
+_bot: Optional[Bot] = None
+
+
+async def notify_users_shutdown():
+    """Notify active users that bot is shutting down"""
+    if not _bot:
+        return
+
+    try:
+        # Get recently active users
+        active_user_ids = get_active_user_ids()
+
+        # Also notify users with active sessions
+        all_user_ids = set(active_user_ids) | set(user_sessions.keys())
+
+        if not all_user_ids:
+            return
+
+        print(f"Notifying {len(all_user_ids)} users about shutdown...")
+
+        for user_id in all_user_ids:
+            try:
+                await _bot.send_message(
+                    user_id,
+                    "⚠️ <b>Бот временно выключается</b>\n\n"
+                    "Проводятся технические работы.\n"
+                    "Бот скоро снова будет доступен.\n\n"
+                    f"При вопросах: <code>{SUPPORT_CONTACT}</code>",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"Failed to notify user {user_id}: {e}")
+
+            await asyncio.sleep(0.1)  # Rate limit
+
+    except Exception as e:
+        print(f"Error notifying users: {e}")
+
+
 async def main():
+    global _bot
+
     if not config.TG_BOT_TOKEN:
         print("❌ Установите TG_BOT_TOKEN в .env файле!")
         print("   Получить токен: @BotFather в Telegram")
         return
 
     bot = Bot(token=config.TG_BOT_TOKEN)
+    _bot = bot
     dp = Dispatcher()
     dp.include_router(router)
 
@@ -943,11 +1071,45 @@ async def main():
     ]
     await bot.set_my_commands(commands)
 
+    # Setup shutdown handler
+    shutdown_event = asyncio.Event()
+
+    def signal_handler(sig, frame):
+        print(f"\n📢 Получен сигнал {sig}, начинаем остановку...")
+        shutdown_event.set()
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    log_event("bot_start", data="Bot started")
     print("🚀 Бот запущен!")
     print("   Остановка: Ctrl+C")
 
-    await dp.start_polling(bot)
+    try:
+        # Start polling in background
+        polling_task = asyncio.create_task(dp.start_polling(bot))
+
+        # Wait for shutdown signal
+        await shutdown_event.wait()
+
+        # Notify users before stopping
+        await notify_users_shutdown()
+
+        # Stop polling
+        await dp.stop_polling()
+        polling_task.cancel()
+
+    except asyncio.CancelledError:
+        pass
+    finally:
+        log_event("bot_stop", data="Bot stopped")
+        await bot.session.close()
+        print("👋 Бот остановлен")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

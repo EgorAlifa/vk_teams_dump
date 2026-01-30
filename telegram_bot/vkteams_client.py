@@ -47,8 +47,8 @@ class VKTeamsClient:
     def _generate_req_id(self) -> str:
         return f"{random.randint(1000, 9999)}-{int(time.time() * 1000)}"
 
-    async def _request(self, method: str, params: dict) -> dict:
-        """Выполнить запрос к RAPI"""
+    async def _request(self, method: str, params: dict, retries: int = 3) -> dict:
+        """Выполнить запрос к RAPI с retry логикой"""
 
         body = {
             "reqId": self._generate_req_id(),
@@ -66,26 +66,56 @@ class VKTeamsClient:
             "Referer": "https://myteam.mail.ru/",
         }
 
-        logger.debug(f"API request: {method} -> {url}")
+        last_error = None
 
-        async with aiohttp.ClientSession() as http:
-            async with http.post(url, json=body, headers=headers) as response:
-                logger.debug(f"Response status: {response.status}, content-type: {response.content_type}")
+        for attempt in range(retries):
+            try:
+                logger.debug(f"API request: {method} -> {url} (attempt {attempt + 1})")
 
-                if response.content_type != "application/json":
-                    text = await response.text()
-                    logger.error(f"Non-JSON response: {text[:500]}")
-                    raise Exception(f"API returned {response.content_type}: {text[:200]}")
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+                    async with http.post(url, json=body, headers=headers) as response:
+                        logger.debug(f"Response status: {response.status}, content-type: {response.content_type}")
 
-                data = await response.json()
+                        if response.content_type != "application/json":
+                            text = await response.text()
+                            logger.error(f"Non-JSON response: {text[:500]}")
+                            raise Exception(f"API returned {response.content_type}: {text[:200]}")
 
-        # единая проверка статуса
-        status = data.get("status", {})
-        if status.get("code") != 20000:
-            logger.error(f"API error: {status}")
-            raise Exception(f"API Error: {status}")
+                        data = await response.json()
 
-        return data.get("results", {})
+                # Check for timeout error in response
+                status = data.get("status", {})
+                if status.get("code") == 50000:  # Request timed out
+                    logger.warning(f"API timeout (code 50000), attempt {attempt + 1}/{retries}")
+                    last_error = Exception(f"API Error: {status}")
+                    if attempt < retries - 1:
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff: 1, 2, 4 sec
+                        continue
+                    raise last_error
+
+                if status.get("code") != 20000:
+                    logger.error(f"API error: {status}")
+                    raise Exception(f"API Error: {status}")
+
+                return data.get("results", {})
+
+            except aiohttp.ClientError as e:
+                logger.warning(f"Network error on attempt {attempt + 1}: {e}")
+                last_error = e
+                if attempt < retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout on attempt {attempt + 1}")
+                last_error = Exception("Request timeout")
+                if attempt < retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise last_error
+
+        raise last_error or Exception("Request failed after retries")
 
     # ---------------------
 
@@ -122,6 +152,7 @@ class VKTeamsClient:
         # Извлекаем контакты из событий buddylist
         contacts = []
         contacts_with_messages = set()  # sn чатов с перепиской
+        blocked_users = {}  # sn -> user state info
         events = data.get("response", {}).get("data", {}).get("events", [])
         logger.debug(f"Found {len(events)} events, types: {[e.get('type') for e in events]}")
 
@@ -161,12 +192,40 @@ class VKTeamsClient:
                         "has_messages": True,
                     })
 
+            elif event_type == "userState":
+                # Track blocked/deleted users
+                sn = event_data.get("sn", "")
+                user_state = event_data.get("userState", {})
+                if sn and user_state.get("state") == "blocked":
+                    blocked_users[sn] = user_state
+
         # Помечаем контакты у которых есть переписка
         for contact in contacts:
             if contact["sn"] in contacts_with_messages:
                 contact["has_messages"] = True
 
-        logger.info(f"Found {len(contacts)} contacts via fetchEvents")
+        # Add blocked users with messages that might not be in the list
+        existing_sns = {c["sn"] for c in contacts}
+        for sn in contacts_with_messages:
+            if sn not in existing_sns and "@chat.agent" not in sn:
+                # This is a personal chat with messages but user might be blocked/deleted
+                is_blocked = sn in blocked_users
+                contacts.append({
+                    "sn": sn,
+                    "name": sn,  # Use email as name
+                    "friendly": "",
+                    "type": "contact",
+                    "has_messages": True,
+                    "is_blocked": is_blocked,
+                })
+
+        # Mark blocked users in existing contacts
+        for contact in contacts:
+            sn = contact.get("sn", "")
+            if sn in blocked_users:
+                contact["is_blocked"] = True
+
+        logger.info(f"Found {len(contacts)} contacts via fetchEvents, {len(blocked_users)} blocked users")
         return contacts
 
     async def get_chat_info(self, sn: str) -> dict:
