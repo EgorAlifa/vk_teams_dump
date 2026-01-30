@@ -121,6 +121,7 @@ class VKTeamsClient:
 
         # Извлекаем контакты из событий buddylist
         contacts = []
+        contacts_with_messages = set()  # sn чатов с перепиской
         events = data.get("response", {}).get("data", {}).get("events", [])
         logger.debug(f"Found {len(events)} events, types: {[e.get('type') for e in events]}")
 
@@ -141,9 +142,10 @@ class VKTeamsClient:
                         })
 
             elif event_type == "histDlgState":
-                # Диалоги/чаты из histDlgState
+                # Диалоги/чаты из histDlgState - это чаты с перепиской
                 sn = event_data.get("sn", "")
                 if sn:
+                    contacts_with_messages.add(sn)
                     # Определяем имя чата
                     name = sn
                     if event_data.get("chat"):
@@ -154,8 +156,15 @@ class VKTeamsClient:
                     contacts.append({
                         "sn": sn,
                         "name": name,
+                        "friendly": event_data.get("friendly", ""),
                         "type": "chat" if "@chat.agent" in sn else "contact",
+                        "has_messages": True,
                     })
+
+        # Помечаем контакты у которых есть переписка
+        for contact in contacts:
+            if contact["sn"] in contacts_with_messages:
+                contact["has_messages"] = True
 
         logger.info(f"Found {len(contacts)} contacts via fetchEvents")
         return contacts

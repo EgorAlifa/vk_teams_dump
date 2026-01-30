@@ -283,8 +283,8 @@ async def cmd_chats(message: Message, state: FSMContext):
 
         # Разделяем на группы и личные чаты (без безымянных дублей)
         all_groups = [c for c in contacts if "@chat.agent" in c.get("sn", "") and not is_unnamed_chat(c)]
-        # Личные чаты - только те, где есть сообщения (lastMsgId присутствует)
-        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c) and c.get("lastMsgId")]
+        # Личные чаты - только те, где есть переписка (has_messages из histDlgState)
+        all_private = [c for c in contacts if "@chat.agent" not in c.get("sn", "") and not is_unnamed_chat(c) and c.get("has_messages")]
 
         # Фильтруем скрытые (ДР, свадьба и т.п.) из обеих категорий
         hidden_groups = [c for c in all_groups if is_hidden_chat(c.get("name", "") or c.get("friendly", "") or c.get("sn", ""))]
