@@ -120,7 +120,107 @@ class VKTeamsClient:
     # ---------------------
 
     async def get_contact_list(self) -> list[dict]:
-        """Получить список всех чатов/контактов через fetchEvents"""
+        """Получить список всех чатов/контактов - комбинация из нескольких источников"""
+
+        all_contacts = {}  # sn -> contact dict (для дедупликации)
+
+        # 1. Получаем контакты через RAPI getContactList
+        try:
+            rapi_contacts = await self._get_contact_list_rapi()
+            for contact in rapi_contacts:
+                sn = contact.get("sn", "")
+                if sn:
+                    all_contacts[sn] = contact
+            logger.info(f"Got {len(rapi_contacts)} contacts from RAPI getContactList")
+        except Exception as e:
+            logger.warning(f"Failed to get contacts via RAPI: {e}")
+
+        # 2. Получаем диалоги через RAPI getDialogs (может содержать больше чатов)
+        try:
+            dialogs = await self._get_dialogs_rapi()
+            for contact in dialogs:
+                sn = contact.get("sn", "")
+                if sn:
+                    if sn in all_contacts:
+                        all_contacts[sn].update(contact)
+                    else:
+                        all_contacts[sn] = contact
+        except Exception as e:
+            logger.warning(f"Failed to get dialogs via RAPI: {e}")
+
+        # 3. Получаем контакты через fetchEvents (buddylist + histDlgState)
+        if self.session.fetch_base_url:
+            try:
+                fetch_contacts = await self._get_contact_list_fetch_events()
+                for contact in fetch_contacts:
+                    sn = contact.get("sn", "")
+                    if sn:
+                        # Мержим данные, приоритет у fetchEvents (там актуальнее)
+                        if sn in all_contacts:
+                            all_contacts[sn].update(contact)
+                        else:
+                            all_contacts[sn] = contact
+                logger.info(f"Got {len(fetch_contacts)} contacts from fetchEvents")
+            except Exception as e:
+                logger.warning(f"Failed to get contacts via fetchEvents: {e}")
+
+        contacts = list(all_contacts.values())
+        logger.info(f"Total unique contacts: {len(contacts)}")
+        return contacts
+
+    async def _get_contact_list_rapi(self) -> list[dict]:
+        """Получить контакты через RAPI getContactList"""
+        results = await self._request("getContactList", {"lang": "ru"})
+
+        contacts = []
+        for contact in results.get("contacts", []):
+            sn = contact.get("sn") or contact.get("aimId", "")
+            if not sn:
+                continue
+
+            contacts.append({
+                "sn": sn,
+                "name": contact.get("friendly", contact.get("nick", sn)),
+                "friendly": contact.get("friendly", ""),
+                "nick": contact.get("nick", ""),
+                "type": "chat" if "@chat.agent" in sn else "contact",
+                "userType": contact.get("userType", ""),
+            })
+
+        return contacts
+
+    async def _get_dialogs_rapi(self) -> list[dict]:
+        """Получить диалоги через RAPI getDialogs - может содержать больше чатов"""
+        try:
+            results = await self._request("getDialogs", {
+                "lang": "ru",
+                "count": 1000,  # Запрашиваем много
+            })
+
+            contacts = []
+            for dialog in results.get("dialogs", []):
+                sn = dialog.get("sn", "")
+                if not sn:
+                    continue
+
+                contacts.append({
+                    "sn": sn,
+                    "name": dialog.get("friendly", dialog.get("name", sn)),
+                    "friendly": dialog.get("friendly", ""),
+                    "type": "chat" if "@chat.agent" in sn else "contact",
+                    "has_messages": True,  # Диалоги это чаты с сообщениями
+                    "unread_count": dialog.get("unreadCount", 0),
+                    "last_msg_id": dialog.get("lastMsgId", ""),
+                })
+
+            logger.info(f"Got {len(contacts)} dialogs from RAPI getDialogs")
+            return contacts
+
+        except Exception as e:
+            logger.debug(f"getDialogs not available: {e}")
+            return []
+
+    async def _get_contact_list_fetch_events(self) -> list[dict]:
 
         if not self.session.fetch_base_url:
             logger.warning("No fetchBaseURL available")
