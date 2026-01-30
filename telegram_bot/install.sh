@@ -25,16 +25,27 @@ cd "$SCRIPT_DIR"
 
 echo -e "${YELLOW}📁 Рабочая директория: $SCRIPT_DIR${NC}\n"
 
-# Функция для проверки sudo
+# Функция для проверки sudo (с проверкой доступа)
 check_sudo() {
     if command -v sudo &> /dev/null; then
-        echo "sudo"
+        # Проверяем, есть ли реальный доступ к sudo (без пароля или с кэшем)
+        if sudo -n true 2>/dev/null; then
+            echo "sudo"
+        else
+            echo ""
+        fi
     else
         echo ""
     fi
 }
 
 SUDO=$(check_sudo)
+
+if [ -z "$SUDO" ]; then
+    echo -e "${YELLOW}⚠ sudo недоступен — установка будет локальной (без системных пакетов)${NC}"
+    echo -e "${YELLOW}  Убедитесь, что Python 3 уже установлен на сервере${NC}"
+    echo ""
+fi
 
 # Определяем пакетный менеджер
 detect_package_manager() {
@@ -58,6 +69,13 @@ PKG_MANAGER=$(detect_package_manager)
 # Функция установки пакета
 install_package() {
     local package=$1
+
+    # Если нет sudo — пропускаем системную установку
+    if [ -z "$SUDO" ]; then
+        echo -e "${YELLOW}⚠ Пропускаю установку $package (нет sudo)${NC}"
+        return 1
+    fi
+
     echo -e "${YELLOW}📦 Устанавливаю $package...${NC}"
 
     case $PKG_MANAGER in
@@ -102,13 +120,21 @@ install_pip_fallback() {
 echo -e "${BLUE}[1/5] Проверяю Python...${NC}"
 
 if ! command -v python3 &> /dev/null; then
-    echo -e "${YELLOW}Python3 не найден, устанавливаю...${NC}"
+    echo -e "${YELLOW}Python3 не найден, пробую установить...${NC}"
     case $PKG_MANAGER in
         apt) install_package "python3" ;;
         dnf|yum) install_package "python3" ;;
         pacman) install_package "python" ;;
         brew) install_package "python3" ;;
     esac
+fi
+
+# Проверяем ещё раз
+if ! command -v python3 &> /dev/null; then
+    echo -e "${RED}✗ Python3 не найден и не удалось установить${NC}"
+    echo -e "${YELLOW}Попросите администратора установить Python 3:${NC}"
+    echo "  apt install python3 python3-pip python3-venv"
+    exit 1
 fi
 
 PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
@@ -155,7 +181,7 @@ echo -e "\n${BLUE}[3/5] Проверяю venv и создаю окружение
 
 # Проверяем, работает ли venv
 if ! python3 -m venv --help &> /dev/null 2>&1; then
-    echo -e "${YELLOW}venv не найден, устанавливаю...${NC}"
+    echo -e "${YELLOW}venv не найден, пробую установить...${NC}"
     case $PKG_MANAGER in
         apt)
             # Определяем версию Python для правильного пакета
@@ -171,6 +197,14 @@ if ! python3 -m venv --help &> /dev/null 2>&1; then
             echo "venv включён в python на macOS"
             ;;
     esac
+
+    # Проверяем ещё раз
+    if ! python3 -m venv --help &> /dev/null 2>&1; then
+        echo -e "${RED}✗ venv не установлен${NC}"
+        echo -e "${YELLOW}Попросите администратора установить:${NC}"
+        echo "  apt install python${PYTHON_MAJOR}.${PYTHON_MINOR}-venv"
+        exit 1
+    fi
 fi
 
 # Проверяем существующий venv — если сломан, удаляем
