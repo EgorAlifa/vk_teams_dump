@@ -229,6 +229,9 @@ def format_as_html(data: dict) -> str:
             gap: 4px;
             cursor: pointer;
             color: var(--text-secondary);
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
         }}
         .search-mode input[type="radio"] {{ accent-color: var(--accent); }}
         .chat-list {{
@@ -242,6 +245,9 @@ def format_as_html(data: dict) -> str:
             cursor: pointer;
             border-bottom: 1px solid var(--border);
             transition: background 0.15s;
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
         }}
         .chat-item:hover {{ background: var(--hover); }}
         .chat-item.active {{ background: var(--hover); }}
@@ -336,6 +342,7 @@ def format_as_html(data: dict) -> str:
             padding: 5px 10px;
             margin-right: 10px;
             color: var(--text);
+            touch-action: manipulation;
         }}
         .chat-header-info {{ flex: 1; }}
         .chat-header-name {{
@@ -353,6 +360,7 @@ def format_as_html(data: dict) -> str:
             cursor: pointer;
             padding: 8px;
             border-radius: 50%;
+            touch-action: manipulation;
         }}
         .search-chat-btn:hover {{ background: var(--hover); }}
         .chat-search-bar {{
@@ -383,6 +391,7 @@ def format_as_html(data: dict) -> str:
             cursor: pointer;
             display: flex;
             justify-content: space-between;
+            touch-action: manipulation;
         }}
         @media (prefers-color-scheme: dark) {{
             .pinned-bar {{ background: #3d3200; color: #ffc107; }}
@@ -498,6 +507,7 @@ def format_as_html(data: dict) -> str:
             cursor: pointer;
             border-bottom: 1px solid var(--border);
             transition: background 0.15s;
+            touch-action: manipulation;
         }}
         .search-result-item:hover {{
             background: var(--hover);
@@ -766,42 +776,6 @@ def format_as_html(data: dict) -> str:
                 document.getElementById('globalSearch').focus();
             }}
         }});
-
-        // Touch support for mobile - make clicks work better
-        if (isMobile) {{
-            document.querySelectorAll('.chat-item').forEach((item, idx) => {{
-                item.addEventListener('touchend', function(e) {{
-                    e.preventDefault();
-                    selectChat(idx);
-                }}, {{ passive: false }});
-            }});
-
-            // Back button touch
-            document.querySelectorAll('.back-btn').forEach(btn => {{
-                btn.addEventListener('touchend', function(e) {{
-                    e.preventDefault();
-                    showChatList();
-                }}, {{ passive: false }});
-            }});
-
-            // Pinned bar touch
-            document.querySelectorAll('.pinned-bar').forEach(bar => {{
-                const idx = bar.getAttribute('onclick').match(/\\d+/)[0];
-                bar.addEventListener('touchend', function(e) {{
-                    e.preventDefault();
-                    togglePinned(idx);
-                }}, {{ passive: false }});
-            }});
-
-            // Search button touch
-            document.querySelectorAll('.search-chat-btn').forEach(btn => {{
-                const idx = btn.getAttribute('onclick').match(/\\d+/)[0];
-                btn.addEventListener('touchend', function(e) {{
-                    e.preventDefault();
-                    toggleChatSearch(idx);
-                }}, {{ passive: false }});
-            }});
-        }}
 
         // Открываем первый чат на десктопе
         if (!isMobile && {len(chats)} > 0) {{
