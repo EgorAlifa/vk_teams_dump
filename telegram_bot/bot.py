@@ -65,6 +65,7 @@ user_sessions: dict[int, VKTeamsSession] = {}
 user_selected_chats: dict[int, list[str]] = {}
 user_exporting: dict[int, bool] = {}  # Блокировка повторных экспортов
 user_search_query: dict[int, str] = {}  # Поисковый запрос
+user_message_ids: dict[int, dict] = {}  # ID сообщений для удаления (code_msg, chats_msg)
 
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
@@ -93,6 +94,29 @@ async def safe_edit_reply_markup(message, **kwargs):
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e):
             raise
+
+
+async def safe_delete_message(bot: Bot, chat_id: int, message_id: int):
+    """Safely delete message, ignoring errors"""
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+
+async def cleanup_user_messages(bot: Bot, user_id: int, chat_id: int, msg_type: str = None):
+    """Удалить сохранённые сообщения пользователя"""
+    msgs = user_message_ids.get(user_id, {})
+    if msg_type:
+        # Удаляем конкретный тип
+        if msg_type in msgs:
+            await safe_delete_message(bot, chat_id, msgs[msg_type])
+            del msgs[msg_type]
+    else:
+        # Удаляем все
+        for msg_id in msgs.values():
+            await safe_delete_message(bot, chat_id, msg_id)
+        user_message_ids[user_id] = {}
 
 
 def is_hidden_chat(name: str) -> bool:
@@ -168,6 +192,7 @@ async def cmd_start(message: Message):
 <b>Команды:</b>
 /auth — авторизоваться
 /chats — список чатов
+/logout — выход из УЗ
 /help — справка
 
 По всем вопросам и при возникновении ошибок обращайтесь: <code>{SUPPORT_CONTACT}</code>
@@ -208,6 +233,24 @@ async def cmd_help(message: Message):
 @router.message(Command("auth"))
 async def cmd_auth(message: Message, state: FSMContext):
     """Начать авторизацию через email"""
+    session = user_sessions.get(message.from_user.id)
+
+    if session:
+        # Уже авторизован
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="🚪 Выйти и войти под другой УЗ", callback_data="do_logout")
+        keyboard.button(text="📋 Перейти к чатам", callback_data="go_to_chats")
+        keyboard.adjust(1)
+
+        await message.answer(
+            f"✅ <b>Вы уже авторизованы</b>\n\n"
+            f"👤 Email: <code>{session.email}</code>\n\n"
+            f"Можете перейти к чатам или выйти для смены учётной записи.",
+            parse_mode="HTML",
+            reply_markup=keyboard.as_markup()
+        )
+        return
+
     text = """
 🔐 <b>Авторизация в VK Teams</b>
 
@@ -215,6 +258,70 @@ async def cmd_auth(message: Message, state: FSMContext):
 """
     await message.answer(text, parse_mode="HTML")
     await state.set_state(AuthStates.waiting_email)
+
+
+@router.message(Command("logout"))
+async def cmd_logout(message: Message, state: FSMContext):
+    """Выход из учётной записи"""
+    session = user_sessions.get(message.from_user.id)
+
+    if not session:
+        await message.answer("ℹ️ Вы не авторизованы.\n\nДля входа используйте /auth")
+        return
+
+    email = session.email
+    # Очищаем данные
+    user_sessions.pop(message.from_user.id, None)
+    user_selected_chats.pop(message.from_user.id, None)
+    user_search_query.pop(message.from_user.id, None)
+    await state.clear()
+
+    # Удаляем старые сообщения со списком чатов
+    await cleanup_user_messages(message.bot, message.from_user.id, message.chat.id)
+
+    log_event("logout", message.from_user.id, email)
+
+    await message.answer(
+        f"🚪 <b>Вы вышли из учётной записи</b>\n\n"
+        f"👤 Был: <code>{email}</code>\n\n"
+        f"Для входа под другой УЗ используйте /auth",
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "do_logout")
+async def handle_logout(callback: CallbackQuery, state: FSMContext):
+    """Обработка кнопки логаута"""
+    session = user_sessions.get(callback.from_user.id)
+    email = session.email if session else "?"
+
+    # Очищаем данные
+    user_sessions.pop(callback.from_user.id, None)
+    user_selected_chats.pop(callback.from_user.id, None)
+    user_search_query.pop(callback.from_user.id, None)
+    await state.clear()
+
+    # Удаляем старые сообщения
+    await cleanup_user_messages(callback.bot, callback.from_user.id, callback.message.chat.id)
+
+    log_event("logout", callback.from_user.id, email)
+
+    await callback.message.edit_text(
+        f"🚪 <b>Вы вышли из учётной записи</b>\n\n"
+        f"👤 Был: <code>{email}</code>\n\n"
+        f"Теперь введите /auth для входа под другой УЗ",
+        parse_mode="HTML"
+    )
+    await callback.answer("Вы вышли")
+
+
+@router.callback_query(F.data == "go_to_chats")
+async def handle_go_to_chats(callback: CallbackQuery, state: FSMContext):
+    """Перейти к чатам из меню авторизации"""
+    await callback.message.delete()
+    # Создаём фейковое сообщение для вызова cmd_chats
+    await cmd_chats(callback.message, state)
+    await callback.answer()
 
 
 @router.message(AuthStates.waiting_email)
@@ -243,6 +350,11 @@ async def process_email(message: Message, state: FSMContext):
             f"и введите полученный код:",
             parse_mode="HTML"
         )
+
+        # Сохраняем ID сообщения для удаления после авторизации
+        if message.from_user.id not in user_message_ids:
+            user_message_ids[message.from_user.id] = {}
+        user_message_ids[message.from_user.id]["code_msg"] = status_msg.message_id
 
     except Exception as e:
         await safe_edit_text(
@@ -292,6 +404,9 @@ async def process_code(message: Message, state: FSMContext):
         )
         await state.clear()
 
+        # Удаляем сообщение "Код отправлен!" - оно больше не нужно
+        await cleanup_user_messages(message.bot, message.from_user.id, message.chat.id, "code_msg")
+
     except Exception as e:
         log_event("auth_error", message.from_user.id, str(e))
         await safe_edit_text(
@@ -314,6 +429,9 @@ async def cmd_chats(message: Message, state: FSMContext):
 
     log_event("chats_view", message.from_user.id)
     update_active_user(message.from_user.id, message.from_user.username)
+
+    # Удаляем старый список чатов, если есть
+    await cleanup_user_messages(message.bot, message.from_user.id, message.chat.id, "chats_msg")
 
     status_msg = await message.answer("⏳ Загружаем список чатов...")
 
@@ -367,6 +485,11 @@ async def cmd_chats(message: Message, state: FSMContext):
             reply_markup=keyboard,
             parse_mode="HTML"
         )
+
+        # Сохраняем ID сообщения для удаления при следующем вызове /chats
+        if message.from_user.id not in user_message_ids:
+            user_message_ids[message.from_user.id] = {}
+        user_message_ids[message.from_user.id]["chats_msg"] = status_msg.message_id
 
         await state.set_state(ExportStates.selecting_chats)
 
@@ -1077,6 +1200,7 @@ async def main():
         BotCommand(command="start", description="Начало работы"),
         BotCommand(command="auth", description="Авторизация"),
         BotCommand(command="chats", description="Список чатов"),
+        BotCommand(command="logout", description="Выход из учётной записи"),
         BotCommand(command="help", description="Справка"),
     ]
     await bot.set_my_commands(commands)
