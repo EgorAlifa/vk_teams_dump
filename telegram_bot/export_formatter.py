@@ -48,9 +48,9 @@ def format_as_html(data: dict) -> str:
         if last_msg.get("time"):
             last_time = datetime.fromtimestamp(last_msg["time"]).strftime("%d.%m")
 
-        # Элемент списка чатов
+        # Элемент списка чатов (tabindex и role для iOS)
         chat_list_html += f'''
-        <div class="chat-item" data-chat-id="{idx}" onclick="selectChat({idx})">
+        <div class="chat-item" data-chat-id="{idx}" tabindex="0" role="button">
             <div class="chat-avatar">{chat_name[0].upper()}</div>
             <div class="chat-item-info">
                 <div class="chat-item-header">
@@ -97,7 +97,7 @@ def format_as_html(data: dict) -> str:
         pinned_html = ""
         if pinned:
             pinned_html = f'''
-            <div class="pinned-bar" onclick="togglePinned({idx})">
+            <div class="pinned-bar" data-pinned-id="{idx}" tabindex="0" role="button">
                 📌 Закреплённых: {len(pinned)} <span class="expand-icon">▼</span>
             </div>
             <div class="pinned-messages" id="pinned-{idx}" style="display:none;">
@@ -109,15 +109,15 @@ def format_as_html(data: dict) -> str:
         chats_content_html += f'''
         <div class="chat-content" id="chat-content-{idx}" style="display:none;">
             <div class="chat-header-bar">
-                <button class="back-btn" onclick="showChatList()">←</button>
+                <button class="back-btn" type="button">←</button>
                 <div class="chat-header-info">
                     <div class="chat-header-name">{chat_name}</div>
                     <div class="chat-header-meta">{msg_count} сообщений</div>
                 </div>
-                <button class="search-chat-btn" onclick="toggleChatSearch({idx})">🔍</button>
+                <button class="search-chat-btn" type="button" data-search-chat="{idx}">🔍</button>
             </div>
             <div class="chat-search-bar" id="chat-search-{idx}" style="display:none;">
-                <input type="text" placeholder="Поиск в этом чате..." onkeyup="searchInChat({idx}, this.value)">
+                <input type="text" placeholder="Поиск в этом чате..." data-chat-search-input="{idx}">
                 <span class="search-results-count" id="search-count-{idx}"></span>
             </div>
             {pinned_html}
@@ -570,7 +570,7 @@ def format_as_html(data: dict) -> str:
                 <div class="sidebar-meta">📅 {export_date} · 💬 {len(chats)} чатов · 📨 {total_messages} сообщений</div>
             </div>
             <div class="global-search">
-                <input type="text" id="globalSearch" placeholder="🔍 Поиск..." oninput="globalSearchHandler()">
+                <input type="text" id="globalSearch" placeholder="🔍 Поиск...">
                 <div class="search-mode">
                     <label><input type="radio" name="searchMode" value="chats" checked> По названиям</label>
                     <label><input type="radio" name="searchMode" value="messages"> По сообщениям</label>
@@ -590,197 +590,303 @@ def format_as_html(data: dict) -> str:
         </div>
     </div>
 
+    <noscript>
+        <div style="padding:20px;text-align:center;background:#ff6b6b;color:white;">
+            ⚠️ JavaScript отключен. Откройте файл в Safari для полной функциональности.
+        </div>
+    </noscript>
     <script>
-        let currentChat = -1;
-        const isMobile = window.innerWidth <= 768;
+        (function() {{
+            'use strict';
 
-        function selectChat(idx) {{
-            // Убираем выделение со всех
-            document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.chat-content').forEach(el => el.style.display = 'none');
+            var currentChat = -1;
+            var isMobile = window.innerWidth <= 768;
 
-            // Скрываем результаты глобального поиска
-            document.getElementById('searchResults').style.display = 'none';
+            // === Основные функции ===
+            function selectChat(idx) {{
+                var items = document.querySelectorAll('.chat-item');
+                var contents = document.querySelectorAll('.chat-content');
 
-            // Выделяем выбранный
-            document.querySelectorAll('.chat-item')[idx].classList.add('active');
-            document.getElementById('chat-content-' + idx).style.display = 'flex';
-            document.getElementById('placeholder').style.display = 'none';
+                for (var i = 0; i < items.length; i++) {{
+                    items[i].classList.remove('active');
+                }}
+                for (var i = 0; i < contents.length; i++) {{
+                    contents[i].style.display = 'none';
+                }}
 
-            currentChat = idx;
+                document.getElementById('searchResults').style.display = 'none';
 
-            // Скроллим вниз
-            const container = document.getElementById('messages-' + idx);
-            container.scrollTop = container.scrollHeight;
+                if (items[idx]) items[idx].classList.add('active');
+                var content = document.getElementById('chat-content-' + idx);
+                if (content) content.style.display = 'flex';
+                document.getElementById('placeholder').style.display = 'none';
 
-            // На мобилке скрываем сайдбар
-            if (isMobile) {{
-                document.getElementById('sidebar').classList.add('hidden');
+                currentChat = idx;
+
+                var container = document.getElementById('messages-' + idx);
+                if (container) container.scrollTop = container.scrollHeight;
+
+                if (isMobile) {{
+                    document.getElementById('sidebar').classList.add('hidden');
+                }}
             }}
-        }}
 
-        function showChatList() {{
-            document.getElementById('sidebar').classList.remove('hidden');
-            if (currentChat >= 0) {{
-                document.getElementById('chat-content-' + currentChat).style.display = 'none';
+            function showChatList() {{
+                document.getElementById('sidebar').classList.remove('hidden');
+                if (currentChat >= 0) {{
+                    var content = document.getElementById('chat-content-' + currentChat);
+                    if (content) content.style.display = 'none';
+                }}
+                document.getElementById('placeholder').style.display = 'flex';
             }}
-            document.getElementById('placeholder').style.display = 'flex';
-        }}
 
-        function togglePinned(idx) {{
-            const el = document.getElementById('pinned-' + idx);
-            el.style.display = el.style.display === 'none' ? 'block' : 'none';
-        }}
-
-        function toggleChatSearch(idx) {{
-            const el = document.getElementById('chat-search-' + idx);
-            el.style.display = el.style.display === 'none' ? 'flex' : 'none';
-            if (el.style.display === 'flex') {{
-                el.querySelector('input').focus();
+            function togglePinned(idx) {{
+                var el = document.getElementById('pinned-' + idx);
+                if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
             }}
-        }}
 
-        function searchInChat(idx, query) {{
-            const q = query.toLowerCase().trim();
-            const container = document.getElementById('messages-' + idx);
-            const messages = container.querySelectorAll('.message');
-            const dateSeparators = container.querySelectorAll('.date-separator');
-            let found = 0;
+            function toggleChatSearch(idx) {{
+                var el = document.getElementById('chat-search-' + idx);
+                if (!el) return;
+                el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+                if (el.style.display === 'flex') {{
+                    var input = el.querySelector('input');
+                    if (input) input.focus();
+                }}
+            }}
 
-            // Сначала обрабатываем сообщения
-            messages.forEach(msg => {{
-                const text = msg.textContent.toLowerCase();
-                const match = !q || text.includes(q);
-                msg.classList.toggle('hidden', q && !match);
-                msg.classList.toggle('highlight', q && match);
-                if (q && match) found++;
-            }});
+            function searchInChat(idx, query) {{
+                var q = (query || '').toLowerCase().trim();
+                var container = document.getElementById('messages-' + idx);
+                if (!container) return;
 
-            // Скрываем разделители дат, если вокруг них нет видимых сообщений
-            dateSeparators.forEach(sep => {{
-                if (!q) {{
-                    sep.classList.remove('hidden');
+                var messages = container.querySelectorAll('.message');
+                var dateSeparators = container.querySelectorAll('.date-separator');
+                var found = 0;
+
+                for (var i = 0; i < messages.length; i++) {{
+                    var msg = messages[i];
+                    var text = msg.textContent.toLowerCase();
+                    var match = !q || text.indexOf(q) !== -1;
+                    msg.classList.toggle('hidden', q && !match);
+                    msg.classList.toggle('highlight', q && match);
+                    if (q && match) found++;
+                }}
+
+                for (var i = 0; i < dateSeparators.length; i++) {{
+                    var sep = dateSeparators[i];
+                    if (!q) {{
+                        sep.classList.remove('hidden');
+                        continue;
+                    }}
+                    var hasVisibleMessages = false;
+                    var next = sep.nextElementSibling;
+                    while (next && !next.classList.contains('date-separator')) {{
+                        if (next.classList.contains('message') && !next.classList.contains('hidden')) {{
+                            hasVisibleMessages = true;
+                            break;
+                        }}
+                        next = next.nextElementSibling;
+                    }}
+                    sep.classList.toggle('hidden', !hasVisibleMessages);
+                }}
+
+                var countEl = document.getElementById('search-count-' + idx);
+                if (countEl) countEl.textContent = q ? 'Найдено: ' + found : '';
+            }}
+
+            function escapeHtml(text) {{
+                var div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }}
+
+            function highlightText(text, query) {{
+                if (!query || !text) return escapeHtml(text);
+                var escaped = escapeHtml(text);
+                var q = query.toLowerCase();
+                var result = '';
+                var lowerText = text.toLowerCase();
+                var lastIdx = 0;
+                var idx = lowerText.indexOf(q);
+                while (idx !== -1) {{
+                    result += escapeHtml(text.substring(lastIdx, idx));
+                    result += '<mark>' + escapeHtml(text.substring(idx, idx + query.length)) + '</mark>';
+                    lastIdx = idx + query.length;
+                    idx = lowerText.indexOf(q, lastIdx);
+                }}
+                result += escapeHtml(text.substring(lastIdx));
+                return result;
+            }}
+
+            function globalSearchHandler() {{
+                var searchInput = document.getElementById('globalSearch');
+                var query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+                var modeRadio = document.querySelector('input[name="searchMode"]:checked');
+                var mode = modeRadio ? modeRadio.value : 'chats';
+                var resultsContainer = document.getElementById('searchResults');
+                var placeholder = document.getElementById('placeholder');
+                var chatItems = document.querySelectorAll('.chat-item');
+
+                if (!query) {{
+                    for (var i = 0; i < chatItems.length; i++) {{
+                        chatItems[i].classList.remove('hidden');
+                    }}
+                    resultsContainer.style.display = 'none';
+                    resultsContainer.innerHTML = '';
+                    if (currentChat < 0) placeholder.style.display = 'flex';
                     return;
                 }}
-                // Проверяем есть ли видимые сообщения после этого разделителя до следующего
-                let hasVisibleMessages = false;
-                let next = sep.nextElementSibling;
-                while (next && !next.classList.contains('date-separator')) {{
-                    if (next.classList.contains('message') && !next.classList.contains('hidden')) {{
-                        hasVisibleMessages = true;
-                        break;
+
+                if (mode === 'chats') {{
+                    resultsContainer.style.display = 'none';
+                    if (currentChat < 0) placeholder.style.display = 'flex';
+                    for (var i = 0; i < chatItems.length; i++) {{
+                        var name = chatItems[i].querySelector('.chat-item-name');
+                        var nameText = name ? name.textContent.toLowerCase() : '';
+                        chatItems[i].classList.toggle('hidden', nameText.indexOf(query) === -1);
                     }}
-                    next = next.nextElementSibling;
-                }}
-                sep.classList.toggle('hidden', !hasVisibleMessages);
-            }});
+                }} else {{
+                    placeholder.style.display = 'none';
+                    var contents = document.querySelectorAll('.chat-content');
+                    for (var i = 0; i < contents.length; i++) {{
+                        contents[i].style.display = 'none';
+                    }}
 
-            document.getElementById('search-count-' + idx).textContent = q ? `Найдено: ${{found}}` : '';
-        }}
+                    var resultsHtml = '<div class="search-results-header">🔍 Результаты поиска</div><div class="search-results-list">';
+                    var totalFound = 0;
 
-        function globalSearchHandler() {{
-            const query = document.getElementById('globalSearch').value.toLowerCase().trim();
-            const mode = document.querySelector('input[name="searchMode"]:checked').value;
-            const resultsContainer = document.getElementById('searchResults');
-            const placeholder = document.getElementById('placeholder');
+                    for (var i = 0; i < chatItems.length; i++) {{
+                        var item = chatItems[i];
+                        var chatNameEl = item.querySelector('.chat-item-name');
+                        var chatName = chatNameEl ? chatNameEl.textContent : '';
+                        var messages = document.querySelectorAll('#messages-' + i + ' .message');
+                        var chatHasMatch = false;
 
-            // Сброс глобального поиска
-            if (!query) {{
-                document.querySelectorAll('.chat-item').forEach(item => item.classList.remove('hidden'));
-                resultsContainer.style.display = 'none';
-                resultsContainer.innerHTML = '';
-                if (currentChat < 0) placeholder.style.display = 'flex';
-                return;
-            }}
+                        for (var j = 0; j < messages.length; j++) {{
+                            var msg = messages[j];
+                            var text = msg.textContent.toLowerCase();
+                            if (text.indexOf(query) !== -1) {{
+                                chatHasMatch = true;
+                                totalFound++;
+                                var msgText = msg.querySelector('.msg-text');
+                                var msgTime = msg.querySelector('.msg-time');
+                                var msgSender = msg.querySelector('.msg-sender');
 
-            if (mode === 'chats') {{
-                // Поиск по названиям чатов
-                resultsContainer.style.display = 'none';
-                if (currentChat < 0) placeholder.style.display = 'flex';
-                document.querySelectorAll('.chat-item').forEach(item => {{
-                    const name = item.querySelector('.chat-item-name').textContent.toLowerCase();
-                    item.classList.toggle('hidden', !name.includes(query));
-                }});
-            }} else {{
-                // Поиск по сообщениям - показываем результаты справа
-                placeholder.style.display = 'none';
-                document.querySelectorAll('.chat-content').forEach(el => el.style.display = 'none');
+                                var textPreview = msgText ? msgText.textContent.substring(0, 150) : '...';
+                                var time = msgTime ? msgTime.textContent : '';
+                                var sender = msgSender ? msgSender.textContent : '';
+                                var msgId = msg.getAttribute('data-msgid') || '';
 
-                let resultsHtml = '<div class="search-results-header">🔍 Результаты поиска</div><div class="search-results-list">';
-                let totalFound = 0;
-
-                document.querySelectorAll('.chat-item').forEach((item, idx) => {{
-                    const chatName = item.querySelector('.chat-item-name').textContent;
-                    const messages = document.querySelectorAll('#messages-' + idx + ' .message');
-                    let chatHasMatch = false;
-
-                    messages.forEach(msg => {{
-                        const text = msg.textContent.toLowerCase();
-                        if (text.includes(query)) {{
-                            chatHasMatch = true;
-                            totalFound++;
-                            const msgText = msg.querySelector('.msg-text');
-                            const msgTime = msg.querySelector('.msg-time');
-                            const msgSender = msg.querySelector('.msg-sender');
-
-                            const textPreview = msgText ? msgText.textContent.substring(0, 150) : '...';
-                            const time = msgTime ? msgTime.textContent : '';
-                            const sender = msgSender ? msgSender.textContent : '';
-
-                            resultsHtml += `
-                                <div class="search-result-item" onclick="goToMessage(${{idx}}, '${{msg.getAttribute('data-msgid') || ''}}')">
-                                    <div class="search-result-chat">${{chatName}}</div>
-                                    <div class="search-result-sender">${{sender}} ${{time}}</div>
-                                    <div class="search-result-text">${{highlightText(textPreview, query)}}</div>
-                                </div>
-                            `;
+                                resultsHtml += '<div class="search-result-item" data-goto-chat="' + i + '" data-goto-msg="' + escapeHtml(msgId) + '" tabindex="0" role="button">';
+                                resultsHtml += '<div class="search-result-chat">' + escapeHtml(chatName) + '</div>';
+                                resultsHtml += '<div class="search-result-sender">' + escapeHtml(sender) + ' ' + escapeHtml(time) + '</div>';
+                                resultsHtml += '<div class="search-result-text">' + highlightText(textPreview, query) + '</div>';
+                                resultsHtml += '</div>';
+                            }}
                         }}
-                    }});
 
-                    item.classList.toggle('hidden', !chatHasMatch);
-                }});
+                        item.classList.toggle('hidden', !chatHasMatch);
+                    }}
 
-                resultsHtml += '</div>';
-                resultsHtml = resultsHtml.replace('Результаты поиска', `Результаты поиска (${{totalFound}})`);
-                resultsContainer.innerHTML = resultsHtml;
-                resultsContainer.style.display = 'flex';
-            }}
-        }}
-
-        function highlightText(text, query) {{
-            if (!query) return text;
-            const regex = new RegExp(`(${{query.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&')}})`, 'gi');
-            return text.replace(regex, '<mark>$1</mark>');
-        }}
-
-        function goToMessage(chatIdx, msgId) {{
-            selectChat(chatIdx);
-            document.getElementById('searchResults').style.display = 'none';
-
-            // Подсветить найденное сообщение
-            if (msgId) {{
-                const msg = document.querySelector(`#messages-${{chatIdx}} .message[data-msgid="${{msgId}}"]`);
-                if (msg) {{
-                    msg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                    msg.classList.add('highlight');
-                    setTimeout(() => msg.classList.remove('highlight'), 2000);
+                    resultsHtml += '</div>';
+                    resultsHtml = resultsHtml.replace('Результаты поиска', 'Результаты поиска (' + totalFound + ')');
+                    resultsContainer.innerHTML = resultsHtml;
+                    resultsContainer.style.display = 'flex';
                 }}
             }}
-        }}
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {{
-            if (e.key === 'Escape') showChatList();
-            if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {{
-                e.preventDefault();
-                document.getElementById('globalSearch').focus();
+            function goToMessage(chatIdx, msgId) {{
+                selectChat(chatIdx);
+                document.getElementById('searchResults').style.display = 'none';
+
+                if (msgId) {{
+                    var msg = document.querySelector('#messages-' + chatIdx + ' .message[data-msgid="' + msgId + '"]');
+                    if (msg) {{
+                        msg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                        msg.classList.add('highlight');
+                        setTimeout(function() {{ msg.classList.remove('highlight'); }}, 2000);
+                    }}
+                }}
             }}
-        }});
 
-        // Открываем первый чат на десктопе
-        if (!isMobile && {len(chats)} > 0) {{
-            selectChat(0);
-        }}
+            // === Event Delegation (работает на iOS) ===
+            document.addEventListener('click', function(e) {{
+                var target = e.target;
+
+                // Поиск родительского элемента с нужным классом/атрибутом
+                var chatItem = target.closest('.chat-item');
+                var backBtn = target.closest('.back-btn');
+                var searchBtn = target.closest('.search-chat-btn');
+                var pinnedBar = target.closest('.pinned-bar');
+                var searchResult = target.closest('.search-result-item');
+
+                if (chatItem) {{
+                    var idx = parseInt(chatItem.getAttribute('data-chat-id'), 10);
+                    if (!isNaN(idx)) selectChat(idx);
+                    return;
+                }}
+
+                if (backBtn) {{
+                    showChatList();
+                    return;
+                }}
+
+                if (searchBtn) {{
+                    var idx = parseInt(searchBtn.getAttribute('data-search-chat'), 10);
+                    if (!isNaN(idx)) toggleChatSearch(idx);
+                    return;
+                }}
+
+                if (pinnedBar) {{
+                    var idx = parseInt(pinnedBar.getAttribute('data-pinned-id'), 10);
+                    if (!isNaN(idx)) togglePinned(idx);
+                    return;
+                }}
+
+                if (searchResult) {{
+                    var chatIdx = parseInt(searchResult.getAttribute('data-goto-chat'), 10);
+                    var msgId = searchResult.getAttribute('data-goto-msg') || '';
+                    if (!isNaN(chatIdx)) goToMessage(chatIdx, msgId);
+                    return;
+                }}
+            }}, false);
+
+            // Поиск - input события
+            var globalSearch = document.getElementById('globalSearch');
+            if (globalSearch) {{
+                globalSearch.addEventListener('input', globalSearchHandler, false);
+            }}
+
+            // Поиск в чате - делегирование
+            document.addEventListener('input', function(e) {{
+                var target = e.target;
+                if (target.hasAttribute('data-chat-search-input')) {{
+                    var idx = parseInt(target.getAttribute('data-chat-search-input'), 10);
+                    if (!isNaN(idx)) searchInChat(idx, target.value);
+                }}
+            }}, false);
+
+            // Radio buttons
+            var radios = document.querySelectorAll('input[name="searchMode"]');
+            for (var i = 0; i < radios.length; i++) {{
+                radios[i].addEventListener('change', globalSearchHandler, false);
+            }}
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', function(e) {{
+                if (e.key === 'Escape') showChatList();
+                if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {{
+                    e.preventDefault();
+                    if (globalSearch) globalSearch.focus();
+                }}
+            }}, false);
+
+            // Открываем первый чат на десктопе
+            if (!isMobile && {len(chats)} > 0) {{
+                selectChat(0);
+            }}
+        }})();
     </script>
 </body>
 </html>'''
