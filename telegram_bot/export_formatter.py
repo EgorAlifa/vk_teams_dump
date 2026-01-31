@@ -13,15 +13,22 @@ def format_as_json(data: dict) -> str:
 
 
 def format_as_html(data: dict) -> str:
-    """Форматирование в HTML - гибридный интерфейс (работает и без JS на iOS)"""
+    """
+    Форматирование в HTML - универсальный интерфейс
+
+    Работает везде:
+    - iOS Files (без JS): details/summary раскрываются нативно
+    - iOS Safari (с JS): улучшенный интерфейс
+    - Android: работает везде
+    - ПК (с JS): двухпанельный интерфейс как мессенджер
+    """
 
     chats = data.get("chats", [])
     total_messages = sum(len(c.get("messages", [])) for c in chats)
     export_date = data.get("export_date", datetime.now().isoformat())[:10]
 
     # Генерируем чаты
-    chat_list_html = ""
-    chats_content_html = ""
+    chats_html = ""
 
     for idx, chat in enumerate(chats):
         chat_sn = chat.get("chat_sn", "")
@@ -73,7 +80,7 @@ def format_as_html(data: dict) -> str:
                 msg_date = datetime.fromtimestamp(msg_time).strftime("%d.%m.%Y")
                 if msg_date != current_date:
                     current_date = msg_date
-                    messages_html += f'<div class="date-separator"><span>{msg_date}</span></div>'
+                    messages_html += f'<div class="date-sep"><span>{msg_date}</span></div>'
 
             messages_html += render_message(msg, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal)
 
@@ -82,488 +89,322 @@ def format_as_html(data: dict) -> str:
         pinned_html = ""
         if pinned:
             pinned_html = f'''
-            <details class="pinned-details">
-                <summary class="pinned-bar">📌 Закреплённых: {len(pinned)}</summary>
-                <div class="pinned-messages">
+            <details class="pinned">
+                <summary>📌 Закреплённых: {len(pinned)}</summary>
+                <div class="pinned-list">
                     {"".join(render_message(m, pinned=True, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal) for m in pinned)}
                 </div>
             </details>
             '''
 
-        # Элемент списка чатов (для sidebar на ПК и для no-JS)
-        chat_list_html += f'''
-        <a href="#chat-{idx}" class="chat-item" data-chat-id="{idx}">
-            <div class="chat-avatar">{chat_name[0].upper()}</div>
-            <div class="chat-item-info">
-                <div class="chat-item-header">
-                    <span class="chat-item-name">{chat_name[:30]}{"..." if len(chat_name) > 30 else ""}</span>
-                    <span class="chat-item-time">{last_time}</span>
-                </div>
-                <div class="chat-item-preview">{last_text}</div>
-            </div>
-            <div class="chat-item-badge">{msg_count}</div>
-        </a>
-        '''
-
-        # Контент чата
-        chats_content_html += f'''
-        <div class="chat-content" id="chat-{idx}" data-chat-id="{idx}">
-            <div class="chat-header-bar">
-                <button class="back-btn" type="button" onclick="showSidebar()">← Назад</button>
-                <div class="chat-header-info">
-                    <div class="chat-header-name">{chat_name}</div>
-                    <div class="chat-header-meta">{msg_count} сообщений</div>
-                </div>
-            </div>
-            {pinned_html}
-            <div class="messages-container">
-                {messages_html}
-            </div>
+        # Чат как details/summary - работает ВЕЗДЕ без JS
+        chats_html += f'''
+<details class="chat" data-id="{idx}">
+    <summary class="chat-header">
+        <span class="avatar">{chat_name[0].upper()}</span>
+        <span class="info">
+            <span class="name">{chat_name[:35]}{"…" if len(chat_name) > 35 else ""}</span>
+            <span class="preview">{last_text}</span>
+        </span>
+        <span class="meta">
+            <span class="time">{last_time}</span>
+            <span class="count">{msg_count}</span>
+        </span>
+    </summary>
+    <div class="chat-body">
+        <div class="chat-title">
+            <strong>{chat_name}</strong>
+            <span>{msg_count} сообщений</span>
         </div>
-        '''
+        {pinned_html}
+        <div class="messages">
+            {messages_html}
+        </div>
+    </div>
+</details>
+'''
 
     return f'''<!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-    <title>VK Teams Export</title>
-    <style>
-        :root {{
-            --bg: #f0f2f5;
-            --card: #ffffff;
-            --text: #1a1a1a;
-            --text-secondary: #667781;
-            --accent: #00a884;
-            --border: #e9edef;
-            --incoming: #ffffff;
-            --outgoing: #d9fdd3;
-            --hover: #f5f6f6;
-        }}
-        @media (prefers-color-scheme: dark) {{
-            :root {{
-                --bg: #111b21;
-                --card: #202c33;
-                --text: #e9edef;
-                --text-secondary: #8696a0;
-                --accent: #00a884;
-                --border: #222d34;
-                --incoming: #202c33;
-                --outgoing: #005c4b;
-                --hover: #2a3942;
-            }}
-        }}
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        html {{ scroll-behavior: smooth; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.4;
-        }}
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
+<title>VK Teams Export</title>
+<style>
+:root {{
+    --bg:#f5f5f5; --card:#fff; --text:#222; --text2:#666;
+    --accent:#00a884; --border:#e0e0e0; --in:#fff; --out:#dcf8c6;
+}}
+@media(prefers-color-scheme:dark) {{
+    :root {{
+        --bg:#0a0a0a; --card:#1a1a1a; --text:#eee; --text2:#888;
+        --accent:#00a884; --border:#333; --in:#1a1a1a; --out:#054640;
+    }}
+}}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ font-family:-apple-system,system-ui,sans-serif; background:var(--bg); color:var(--text); }}
 
-        /* === DESKTOP LAYOUT (with JS) === */
-        .app {{
-            display: flex;
-            height: 100vh;
-            max-width: 1400px;
-            margin: 0 auto;
-        }}
+/* Header */
+.header {{
+    position:sticky; top:0; z-index:100;
+    background:var(--card); padding:12px 16px;
+    border-bottom:1px solid var(--border);
+}}
+.header h1 {{ font-size:18px; margin-bottom:4px; }}
+.header small {{ color:var(--text2); font-size:12px; }}
 
-        /* Sidebar */
-        .sidebar {{
-            width: 380px;
-            background: var(--card);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            flex-shrink: 0;
-            height: 100vh;
-            overflow: hidden;
-        }}
-        .sidebar-header {{
-            padding: 15px;
-            border-bottom: 1px solid var(--border);
-        }}
-        .sidebar-header h1 {{ font-size: 18px; margin-bottom: 5px; }}
-        .sidebar-meta {{ font-size: 12px; color: var(--text-secondary); }}
+/* Search */
+.search {{
+    position:sticky; top:58px; z-index:99;
+    background:var(--card); padding:8px 16px;
+    border-bottom:1px solid var(--border);
+}}
+.search input {{
+    width:100%; padding:10px 14px; border:none; border-radius:8px;
+    background:var(--bg); color:var(--text); font-size:15px;
+}}
 
-        .search-box {{
-            padding: 10px 15px;
-            border-bottom: 1px solid var(--border);
-        }}
-        .search-box input {{
-            width: 100%;
-            padding: 10px 15px;
-            border: none;
-            border-radius: 8px;
-            background: var(--bg);
-            color: var(--text);
-            font-size: 14px;
-        }}
+/* Chat list */
+.list {{ max-width:800px; margin:0 auto; }}
 
-        .chat-list {{
-            flex: 1;
-            overflow-y: auto;
-        }}
+/* Each chat - details/summary */
+.chat {{
+    background:var(--card);
+    border-bottom:1px solid var(--border);
+}}
+.chat[open] {{ background:var(--bg); }}
+.chat[open] .chat-header {{ background:var(--accent); color:#fff; }}
+.chat[open] .chat-header .text2,
+.chat[open] .chat-header .time {{ color:rgba(255,255,255,0.8); }}
 
-        .chat-item {{
-            display: flex;
-            align-items: center;
-            padding: 12px 15px;
-            cursor: pointer;
-            border-bottom: 1px solid var(--border);
-            text-decoration: none;
-            color: inherit;
-            transition: background 0.15s;
-        }}
-        .chat-item:hover, .chat-item.active {{ background: var(--hover); }}
-        .chat-item.hidden {{ display: none; }}
+.chat-header {{
+    display:flex; align-items:center; gap:12px;
+    padding:12px 16px; cursor:pointer;
+    list-style:none;
+}}
+.chat-header::-webkit-details-marker {{ display:none; }}
 
-        .chat-avatar {{
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: var(--accent);
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            font-weight: 500;
-            margin-right: 12px;
-            flex-shrink: 0;
-        }}
-        .chat-item-info {{ flex: 1; min-width: 0; }}
-        .chat-item-header {{ display: flex; justify-content: space-between; margin-bottom: 3px; }}
-        .chat-item-name {{ font-weight: 500; font-size: 15px; }}
-        .chat-item-time {{ font-size: 12px; color: var(--text-secondary); }}
-        .chat-item-preview {{ font-size: 13px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-        .chat-item-badge {{
-            background: var(--accent);
-            color: white;
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 10px;
-            margin-left: 8px;
-        }}
+.avatar {{
+    width:48px; height:48px; border-radius:50%;
+    background:var(--accent); color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-size:20px; font-weight:500; flex-shrink:0;
+}}
+.chat[open] .avatar {{ background:rgba(255,255,255,0.2); }}
 
-        /* Chat area */
-        .chat-area {{
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: var(--bg);
-            min-width: 0;
-            height: 100vh;
-            overflow: hidden;
-        }}
-        .chat-placeholder {{
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-secondary);
-        }}
+.info {{ flex:1; min-width:0; }}
+.name {{ display:block; font-weight:500; font-size:15px; }}
+.preview {{ display:block; font-size:13px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 
-        .chat-content {{
-            display: none;
-            flex-direction: column;
-            height: 100%;
-            overflow: hidden;
-        }}
-        .chat-content:target,
-        .chat-content.active {{
-            display: flex;
-        }}
+.meta {{ text-align:right; flex-shrink:0; }}
+.time {{ display:block; font-size:11px; color:var(--text2); }}
+.count {{
+    display:inline-block; margin-top:4px;
+    background:var(--accent); color:#fff;
+    font-size:11px; padding:2px 8px; border-radius:10px;
+}}
 
-        .chat-header-bar {{
-            display: flex;
-            align-items: center;
-            padding: 15px;
-            background: var(--card);
-            border-bottom: 1px solid var(--border);
-            gap: 15px;
-        }}
-        .back-btn {{
-            display: none;
-            background: none;
-            border: none;
-            font-size: 16px;
-            cursor: pointer;
-            color: var(--accent);
-            padding: 5px 10px;
-        }}
-        .chat-header-info {{ flex: 1; }}
-        .chat-header-name {{ font-weight: 600; font-size: 16px; }}
-        .chat-header-meta {{ font-size: 12px; color: var(--text-secondary); }}
+/* Chat body */
+.chat-body {{ padding:12px; background:var(--bg); }}
 
-        .messages-container {{
-            flex: 1;
-            overflow-y: auto;
-            padding: 15px 50px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }}
+.chat-title {{
+    background:var(--card); padding:12px 16px; border-radius:8px;
+    margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;
+}}
+.chat-title strong {{ font-size:16px; }}
+.chat-title span {{ font-size:12px; color:var(--text2); }}
 
-        /* Pinned */
-        .pinned-details {{ margin: 10px 15px; }}
-        .pinned-bar {{
-            padding: 10px 15px;
-            background: #fff3cd;
-            color: #856404;
-            font-size: 13px;
-            cursor: pointer;
-            border-radius: 8px;
-            list-style: none;
-        }}
-        .pinned-bar::-webkit-details-marker {{ display: none; }}
-        @media (prefers-color-scheme: dark) {{
-            .pinned-bar {{ background: #3d3200; color: #ffc107; }}
-        }}
-        .pinned-messages {{
-            background: var(--card);
-            border-radius: 8px;
-            margin-top: 5px;
-            padding: 10px;
-            max-height: 200px;
-            overflow-y: auto;
-        }}
+/* Pinned */
+.pinned {{ margin-bottom:12px; }}
+.pinned summary {{
+    background:#fff3cd; color:#856404; padding:10px 14px;
+    border-radius:8px; cursor:pointer; font-size:13px;
+    list-style:none;
+}}
+.pinned summary::-webkit-details-marker {{ display:none; }}
+@media(prefers-color-scheme:dark) {{
+    .pinned summary {{ background:#3d3200; color:#ffc107; }}
+}}
+.pinned-list {{
+    background:var(--card); border-radius:8px; margin-top:8px;
+    padding:10px; max-height:250px; overflow-y:auto;
+}}
 
-        /* Messages */
-        .date-separator {{
-            text-align: center;
-            margin: 15px 0;
-        }}
-        .date-separator span {{
-            background: var(--card);
-            padding: 5px 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            color: var(--text-secondary);
-        }}
-        .message {{
-            max-width: 65%;
-            padding: 8px 12px;
-            border-radius: 8px;
-            background: var(--incoming);
-            word-wrap: break-word;
-        }}
-        .message.outgoing {{
-            background: var(--outgoing);
-            align-self: flex-end;
-        }}
-        .msg-sender {{
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--accent);
-            margin-bottom: 2px;
-        }}
-        .msg-text {{
-            font-size: 14px;
-            white-space: pre-wrap;
-        }}
-        .msg-time {{
-            font-size: 10px;
-            color: var(--text-secondary);
-            text-align: right;
-            margin-top: 2px;
-        }}
-        .msg-quote {{
-            border-left: 3px solid var(--accent);
-            padding: 5px 10px;
-            margin: 5px 0;
-            background: rgba(0,0,0,0.05);
-            border-radius: 0 6px 6px 0;
-            font-size: 12px;
-        }}
-        .msg-quote-sender {{ font-weight: 600; color: var(--accent); font-size: 11px; }}
-        .msg-file {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(0,0,0,0.05);
-            padding: 8px 10px;
-            border-radius: 6px;
-            margin-top: 5px;
-        }}
-        .msg-file a {{ color: var(--accent); text-decoration: none; font-size: 13px; }}
+/* Messages */
+.messages {{ display:flex; flex-direction:column; gap:4px; }}
 
-        /* === MOBILE === */
-        @media (max-width: 768px) {{
-            .app {{
-                flex-direction: column;
-                height: auto;
-            }}
-            .sidebar {{
-                width: 100%;
-                height: auto;
-                max-height: 100vh;
-                position: fixed;
-                top: 0;
-                left: 0;
-                z-index: 100;
-                transition: transform 0.3s;
-            }}
-            .sidebar.hidden {{
-                transform: translateX(-100%);
-            }}
-            .chat-area {{
-                width: 100%;
-                height: 100vh;
-            }}
-            .chat-placeholder {{ display: none; }}
-            .back-btn {{ display: block; }}
-            .messages-container {{ padding: 10px 15px; }}
-            .message {{ max-width: 85%; }}
-            .chat-item {{ padding: 10px 12px; }}
-            .chat-avatar {{ width: 45px; height: 45px; font-size: 18px; }}
+.date-sep {{ text-align:center; margin:16px 0; }}
+.date-sep span {{
+    background:var(--card); padding:4px 12px; border-radius:12px;
+    font-size:11px; color:var(--text2);
+}}
 
-            /* No-JS: показываем чат по :target */
-            .chat-content:target {{
-                display: flex;
-            }}
-        }}
+.msg {{
+    max-width:80%; padding:8px 12px; border-radius:12px;
+    background:var(--in); font-size:14px; word-wrap:break-word;
+}}
+.msg.out {{ background:var(--out); align-self:flex-end; }}
 
-        /* === NO-JS FALLBACK === */
-        .no-js-index {{
-            display: none;
-            padding: 15px;
-            background: var(--card);
-            border-bottom: 1px solid var(--border);
-        }}
-        .no-js-index a {{
-            color: var(--accent);
-            margin-right: 10px;
-            text-decoration: none;
-            font-size: 13px;
-        }}
+.msg .sender {{ font-size:12px; font-weight:600; color:var(--accent); margin-bottom:2px; }}
+.msg .text {{ white-space:pre-wrap; line-height:1.4; }}
+.msg .tm {{ font-size:10px; color:var(--text2); text-align:right; margin-top:2px; }}
 
-        /* Show no-js elements when JS is disabled */
-        @media (max-width: 768px) {{
-            .no-js-note {{
-                display: block;
-                padding: 10px 15px;
-                background: #e3f2fd;
-                color: #1565c0;
-                font-size: 12px;
-                text-align: center;
-            }}
-        }}
-    </style>
+.msg .quote {{
+    border-left:3px solid var(--accent); padding:4px 8px; margin:4px 0;
+    background:rgba(0,0,0,0.05); border-radius:0 6px 6px 0; font-size:12px;
+}}
+.msg .quote b {{ color:var(--accent); }}
+
+.msg .file {{
+    display:flex; gap:8px; align-items:center;
+    background:rgba(0,0,0,0.05); padding:8px; border-radius:6px; margin-top:6px;
+}}
+.msg .file a {{ color:var(--accent); text-decoration:none; font-size:13px; }}
+
+/* Mobile tweaks */
+@media(max-width:600px) {{
+    .chat-header {{ padding:10px 12px; gap:10px; }}
+    .avatar {{ width:42px; height:42px; font-size:18px; }}
+    .name {{ font-size:14px; }}
+    .preview {{ font-size:12px; }}
+    .msg {{ max-width:88%; }}
+}}
+
+/* Hide filtered */
+.chat.hidden {{ display:none; }}
+
+/* === DESKTOP: Two-panel layout with JS === */
+body.desktop .list {{ display:flex; max-width:1200px; height:100vh; overflow:hidden; }}
+body.desktop .sidebar {{
+    width:360px; flex-shrink:0; overflow-y:auto;
+    border-right:1px solid var(--border); background:var(--card);
+}}
+body.desktop .main {{
+    flex:1; display:flex; flex-direction:column;
+    background:var(--bg); overflow:hidden;
+}}
+body.desktop .main-placeholder {{
+    flex:1; display:flex; align-items:center; justify-content:center;
+    color:var(--text2); font-size:16px;
+}}
+body.desktop .main-chat {{
+    display:none; flex-direction:column; height:100%; overflow:hidden;
+}}
+body.desktop .main-chat.active {{ display:flex; }}
+body.desktop .main-chat .chat-title {{ margin:0; border-radius:0; border-bottom:1px solid var(--border); }}
+body.desktop .main-chat .messages {{ flex:1; overflow-y:auto; padding:16px 40px; }}
+
+body.desktop .chat {{ border-bottom:1px solid var(--border); }}
+body.desktop .chat .chat-body {{ display:none !important; }}
+body.desktop .chat[open] .chat-header {{ background:var(--hover, var(--accent)); }}
+body.desktop .chat-header:hover {{ background:var(--border); }}
+</style>
 </head>
 <body>
-    <div class="app">
-        <div class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <h1>📦 VK Teams Export</h1>
-                <div class="sidebar-meta">📅 {export_date} · 💬 {len(chats)} чатов · 📨 {total_messages} сообщений</div>
-            </div>
-            <div class="search-box">
-                <input type="text" id="searchInput" placeholder="🔍 Поиск по названию чата...">
-            </div>
-            <div class="chat-list" id="chatList">
-                {chat_list_html}
-            </div>
-        </div>
 
-        <div class="chat-area" id="chatArea">
-            <div class="chat-placeholder" id="placeholder">
-                👈 Выберите чат для просмотра
-            </div>
-            {chats_content_html}
-        </div>
-    </div>
+<div class="header">
+    <h1>📦 VK Teams Export</h1>
+    <small>📅 {export_date} · 💬 {len(chats)} чатов · 📨 {total_messages} сообщений</small>
+</div>
 
-    <script>
-        (function() {{
-            var sidebar = document.getElementById('sidebar');
-            var chatArea = document.getElementById('chatArea');
-            var placeholder = document.getElementById('placeholder');
-            var searchInput = document.getElementById('searchInput');
-            var chatItems = document.querySelectorAll('.chat-item');
-            var chatContents = document.querySelectorAll('.chat-content');
-            var isMobile = window.innerWidth <= 768;
+<div class="search">
+    <input type="text" id="search" placeholder="🔍 Поиск чата...">
+</div>
 
-            // Поиск
-            if (searchInput) {{
-                searchInput.addEventListener('input', function() {{
-                    var q = this.value.toLowerCase().trim();
-                    chatItems.forEach(function(item) {{
-                        var name = item.querySelector('.chat-item-name');
-                        var text = name ? name.textContent.toLowerCase() : '';
-                        item.classList.toggle('hidden', q && text.indexOf(q) === -1);
-                    }});
-                }});
-            }}
+<div class="list" id="list">
+    {chats_html}
+</div>
+
+<script>
+(function() {{
+    // Поиск (работает везде где есть JS)
+    var search = document.getElementById('search');
+    var chats = document.querySelectorAll('.chat');
+
+    if (search) {{
+        search.addEventListener('input', function() {{
+            var q = this.value.toLowerCase();
+            chats.forEach(function(c) {{
+                var name = c.querySelector('.name');
+                var t = name ? name.textContent.toLowerCase() : '';
+                c.classList.toggle('hidden', q && t.indexOf(q) < 0);
+            }});
+        }});
+    }}
+
+    // Desktop: превращаем в двухпанельный интерфейс
+    var isDesktop = window.innerWidth > 800;
+
+    if (isDesktop) {{
+        document.body.classList.add('desktop');
+
+        var list = document.getElementById('list');
+
+        // Создаём sidebar и main
+        var sidebar = document.createElement('div');
+        sidebar.className = 'sidebar';
+
+        var main = document.createElement('div');
+        main.className = 'main';
+        main.innerHTML = '<div class="main-placeholder">👈 Выберите чат</div>';
+
+        // Переносим чаты в sidebar
+        while (list.firstChild) {{
+            sidebar.appendChild(list.firstChild);
+        }}
+
+        list.appendChild(sidebar);
+        list.appendChild(main);
+
+        // Создаём контент для каждого чата
+        var chatEls = sidebar.querySelectorAll('.chat');
+        chatEls.forEach(function(chat, idx) {{
+            var body = chat.querySelector('.chat-body');
+            if (!body) return;
+
+            // Создаём панель для main
+            var panel = document.createElement('div');
+            panel.className = 'main-chat';
+            panel.dataset.idx = idx;
+            panel.innerHTML = body.innerHTML;
+            main.appendChild(panel);
 
             // Клик по чату
-            chatItems.forEach(function(item) {{
-                item.addEventListener('click', function(e) {{
-                    e.preventDefault();
-                    var chatId = this.getAttribute('data-chat-id');
-                    selectChat(chatId);
-                }});
+            var header = chat.querySelector('.chat-header');
+            header.addEventListener('click', function(e) {{
+                e.preventDefault();
+
+                // Закрываем все
+                chatEls.forEach(function(c) {{ c.removeAttribute('open'); }});
+                main.querySelectorAll('.main-chat').forEach(function(p) {{ p.classList.remove('active'); }});
+                main.querySelector('.main-placeholder').style.display = 'none';
+
+                // Открываем выбранный
+                chat.setAttribute('open', '');
+                panel.classList.add('active');
+
+                // Скролл вниз
+                var msgs = panel.querySelector('.messages');
+                if (msgs) msgs.scrollTop = msgs.scrollHeight;
             }});
+        }});
 
-            function selectChat(chatId) {{
-                // Убираем активный класс
-                chatItems.forEach(function(i) {{ i.classList.remove('active'); }});
-                chatContents.forEach(function(c) {{ c.classList.remove('active'); }});
+        // Открываем первый чат
+        if (chatEls.length > 0) {{
+            chatEls[0].querySelector('.chat-header').click();
+        }}
+    }}
+}})();
+</script>
 
-                // Активируем выбранный
-                var item = document.querySelector('.chat-item[data-chat-id="' + chatId + '"]');
-                var content = document.getElementById('chat-' + chatId);
-
-                if (item) item.classList.add('active');
-                if (content) {{
-                    content.classList.add('active');
-                    placeholder.style.display = 'none';
-                    // Скролл вниз
-                    var messages = content.querySelector('.messages-container');
-                    if (messages) messages.scrollTop = messages.scrollHeight;
-                }}
-
-                // На мобильном скрываем sidebar
-                if (isMobile) {{
-                    sidebar.classList.add('hidden');
-                }}
-            }}
-
-            // Показать sidebar
-            window.showSidebar = function() {{
-                sidebar.classList.remove('hidden');
-                chatContents.forEach(function(c) {{ c.classList.remove('active'); }});
-                placeholder.style.display = 'flex';
-            }};
-
-            // Обработка хеша (для no-JS навигации)
-            function handleHash() {{
-                var hash = window.location.hash;
-                if (hash && hash.startsWith('#chat-')) {{
-                    var chatId = hash.replace('#chat-', '');
-                    selectChat(chatId);
-                }}
-            }}
-            window.addEventListener('hashchange', handleHash);
-            if (window.location.hash) handleHash();
-
-            // На десктопе открываем первый чат
-            if (!isMobile && chatItems.length > 0) {{
-                selectChat('0');
-            }}
-        }})();
-    </script>
 </body>
 </html>'''
 
 
 def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, chat_sn: str = "", is_personal: bool = False) -> str:
-    """Рендер одного сообщения в HTML"""
+    """Рендер одного сообщения"""
     is_outgoing = msg.get("outgoing", False)
 
-    # Определяем отправителя
     sender_sn = (
         msg.get("chat", {}).get("sender") or
         msg.get("senderSn") or
@@ -572,12 +413,8 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
         ""
     )
 
-    # Для личных чатов определяем отправителя по outgoing
     if is_personal:
-        if is_outgoing:
-            sender_name = "Вы"
-        else:
-            sender_name = chat_sn
+        sender_name = "Вы" if is_outgoing else chat_sn
     else:
         sender_name = msg.get("senderNick") or msg.get("friendly") or ""
         if chat_members and sender_sn:
@@ -586,102 +423,65 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
         if not sender_name and sender_sn:
             sender_name = sender_sn
 
-    sender = escape(sender_name or "Неизвестный")
-
-    # Время
+    sender = escape(sender_name or "?")
     timestamp = msg.get("time", 0)
     time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M") if timestamp else ""
 
-    # Контент
-    content_html = ""
+    content = ""
     parts = msg.get("parts", [])
 
     if parts:
         for part in parts:
-            media_type = part.get("mediaType")
-
-            if media_type == "text":
-                captioned = part.get("captionedContent") or {}
-                text = captioned.get("caption") or part.get("text", "")
+            mt = part.get("mediaType")
+            if mt == "text":
+                cap = part.get("captionedContent") or {}
+                text = cap.get("caption") or part.get("text", "")
                 if text:
-                    content_html += f'<div class="msg-text">{escape(text)}</div>'
-
-            elif media_type == "quote":
-                quote_sender = escape(part.get("sn", ""))
-                quote_text = escape(str(part.get("text", ""))[:200])
-                content_html += f'''
-                    <div class="msg-quote">
-                        <div class="msg-quote-sender">↩️ {quote_sender}</div>
-                        <div>{quote_text}</div>
-                    </div>
-                '''
-
-            elif media_type == "forward":
-                fwd_sender = escape(part.get("sn", ""))
-                captioned = part.get("captionedContent") or {}
-                fwd_text = escape(str(captioned.get("caption") or part.get("text", ""))[:300])
-                content_html += f'''
-                    <div class="msg-quote" style="border-color:#9c27b0;">
-                        <div class="msg-quote-sender" style="color:#9c27b0;">⤵️ {fwd_sender}</div>
-                        <div>{fwd_text}</div>
-                    </div>
-                '''
+                    content += f'<div class="text">{escape(text)}</div>'
+            elif mt == "quote":
+                qs = escape(part.get("sn", ""))
+                qt = escape(str(part.get("text", ""))[:200])
+                content += f'<div class="quote"><b>↩ {qs}</b><br>{qt}</div>'
+            elif mt == "forward":
+                fs = escape(part.get("sn", ""))
+                cap = part.get("captionedContent") or {}
+                ft = escape(str(cap.get("caption") or part.get("text", ""))[:200])
+                content += f'<div class="quote" style="border-color:#9c27b0"><b style="color:#9c27b0">⤵ {fs}</b><br>{ft}</div>'
     elif msg.get("text"):
-        content_html += f'<div class="msg-text">{escape(msg["text"])}</div>'
+        content += f'<div class="text">{escape(msg["text"])}</div>'
 
-    # Файлы
     for file in msg.get("filesharing", []):
         name = escape(file.get("name", "файл"))
         url = escape(file.get("original_url", "#"))
         size = format_size(file.get("size"))
         icon = get_file_icon(file.get("mime", ""))
-        content_html += f'''
-            <div class="msg-file">
-                {icon} <a href="{url}" target="_blank">{name}</a>
-                <span style="color:var(--text-secondary);font-size:11px;">{size}</span>
-            </div>
-        '''
+        content += f'<div class="file">{icon} <a href="{url}" target="_blank">{name}</a> <small>{size}</small></div>'
 
-    classes = "message outgoing" if is_outgoing else "message"
-    msg_id = msg.get("msgId", "")
+    cls = "msg out" if is_outgoing else "msg"
+    sender_html = "" if is_outgoing or is_personal else f'<div class="sender">{sender}</div>'
 
-    # Показываем отправителя только для входящих в группах
-    sender_html = ""
-    if not is_outgoing and not is_personal:
-        sender_html = f'<div class="msg-sender">{sender}</div>'
-
-    return f'''
-    <div class="{classes}" data-msgid="{msg_id}">
-        {sender_html}
-        {content_html}
-        <div class="msg-time">{time_str}</div>
-    </div>
-    '''
+    return f'<div class="{cls}">{sender_html}{content}<div class="tm">{time_str}</div></div>'
 
 
 def format_size(size) -> str:
-    """Форматирование размера файла"""
     if not size:
         return ""
     try:
         size = int(size)
     except:
         return ""
-
     if size < 1024:
         return f"{size} Б"
     elif size < 1024 * 1024:
         return f"{size / 1024:.1f} КБ"
-    else:
-        return f"{size / (1024 * 1024):.1f} МБ"
+    return f"{size / (1024 * 1024):.1f} МБ"
 
 
 def get_file_icon(mime: str) -> str:
-    """Иконка по MIME типу"""
     if not mime:
         return "📎"
     if mime.startswith("image/"):
-        return "🖼️"
+        return "🖼"
     if mime.startswith("video/"):
         return "🎬"
     if mime.startswith("audio/"):
@@ -690,8 +490,4 @@ def get_file_icon(mime: str) -> str:
         return "📄"
     if "zip" in mime or "rar" in mime:
         return "📦"
-    if "word" in mime or "document" in mime:
-        return "📝"
-    if "excel" in mime or "spreadsheet" in mime:
-        return "📊"
     return "📎"
