@@ -40,10 +40,39 @@ class VKTeamsSession:
 class VKTeamsClient:
     """Клиент для работы с VK Teams API (RAPI)"""
 
+    # Shared HTTP session for connection pooling
+    _http_session: Optional[aiohttp.ClientSession] = None
+
     def __init__(self, session: VKTeamsSession):
         self.session = session
         # Используем rapi вместо wim - проверено что работает
         self.api_base = "https://u.myteam.vmailru.net/api/v139/rapi"
+
+    @classmethod
+    def _get_http_session(cls) -> aiohttp.ClientSession:
+        """Получить или создать shared HTTP session"""
+        if cls._http_session is None or cls._http_session.closed:
+            # Оптимизированные настройки коннектора
+            connector = aiohttp.TCPConnector(
+                limit=10,  # Макс соединений
+                limit_per_host=5,  # Макс на хост
+                ttl_dns_cache=300,  # DNS кеш 5 мин
+                keepalive_timeout=30,  # Keep-alive
+            )
+            cls._http_session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=30, connect=10),
+            )
+            logger.info("Created new shared HTTP session with connection pooling")
+        return cls._http_session
+
+    @classmethod
+    async def close_session(cls):
+        """Закрыть shared HTTP session"""
+        if cls._http_session and not cls._http_session.closed:
+            await cls._http_session.close()
+            cls._http_session = None
+            logger.info("Closed shared HTTP session")
 
     def _generate_req_id(self) -> str:
         return f"{random.randint(1000, 9999)}-{int(time.time() * 1000)}"
@@ -68,21 +97,21 @@ class VKTeamsClient:
         }
 
         last_error = None
+        http = self._get_http_session()
 
         for attempt in range(retries):
             try:
                 logger.debug(f"API request: {method} -> {url} (attempt {attempt + 1})")
 
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
-                    async with http.post(url, json=body, headers=headers) as response:
-                        logger.debug(f"Response status: {response.status}, content-type: {response.content_type}")
+                async with http.post(url, json=body, headers=headers) as response:
+                    logger.debug(f"Response status: {response.status}, content-type: {response.content_type}")
 
-                        if response.content_type != "application/json":
-                            text = await response.text()
-                            logger.error(f"Non-JSON response: {text[:500]}")
-                            raise Exception(f"API returned {response.content_type}: {text[:200]}")
+                    if response.content_type != "application/json":
+                        text = await response.text()
+                        logger.error(f"Non-JSON response: {text[:500]}")
+                        raise Exception(f"API returned {response.content_type}: {text[:200]}")
 
-                        data = await response.json()
+                    data = await response.json()
 
                 # Check for timeout error in response
                 status = data.get("status", {})
@@ -263,125 +292,126 @@ class VKTeamsClient:
         total_events = 0
         hist_dlg_count = 0
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=35)) as http:
-            while iteration < max_iterations:
-                iteration += 1
-                logger.debug(f"fetchEvents iteration {iteration}, URL: {current_url[:80]}...")
+        http = self._get_http_session()
 
-                try:
-                    async with http.get(current_url, headers=headers) as response:
-                        logger.debug(f"fetchEvents status: {response.status}")
+        while iteration < max_iterations:
+            iteration += 1
+            logger.debug(f"fetchEvents iteration {iteration}, URL: {current_url[:80]}...")
 
-                        if response.content_type != "application/json":
-                            text = await response.text()
-                            logger.error(f"fetchEvents non-JSON: {text[:200]}")
-                            break
+            try:
+                async with http.get(current_url, headers=headers) as response:
+                    logger.debug(f"fetchEvents status: {response.status}")
 
-                        data = await response.json()
-                except asyncio.TimeoutError:
-                    logger.warning(f"fetchEvents timeout on iteration {iteration}")
-                    break
-                except Exception as e:
-                    logger.error(f"fetchEvents error: {e}")
-                    break
+                    if response.content_type != "application/json":
+                        text = await response.text()
+                        logger.error(f"fetchEvents non-JSON: {text[:200]}")
+                        break
 
-                # Получаем следующий URL для long-polling
-                response_data = data.get("response", {}).get("data", {})
-                next_url = response_data.get("fetchBaseURL", "")
-                events = response_data.get("events", [])
+                    data = await response.json()
+            except asyncio.TimeoutError:
+                logger.warning(f"fetchEvents timeout on iteration {iteration}")
+                break
+            except Exception as e:
+                logger.error(f"fetchEvents error: {e}")
+                break
 
-                total_events += len(events)
-                event_types = [e.get("type") for e in events]
-                logger.debug(f"Iteration {iteration}: {len(events)} events, types: {set(event_types)}")
+            # Получаем следующий URL для long-polling
+            response_data = data.get("response", {}).get("data", {})
+            next_url = response_data.get("fetchBaseURL", "")
+            events = response_data.get("events", [])
 
-                # Обрабатываем события
-                new_hist_dlg = 0
-                for event in events:
-                    event_type = event.get("type")
-                    event_data = event.get("eventData", event.get("data", {}))
+            total_events += len(events)
+            event_types = [e.get("type") for e in events]
+            logger.debug(f"Iteration {iteration}: {len(events)} events, types: {set(event_types)}")
 
-                    if event_type == "buddylist":
-                        # Контакты из buddylist
-                        groups = event_data.get("groups", [])
-                        for group in groups:
-                            buddies = group.get("buddies", [])
-                            for buddy in buddies:
-                                sn = buddy.get("aimId", "")
-                                if sn and sn not in contacts_by_sn:
-                                    # Используем friendly если есть и не placeholder
-                                    friendly = buddy.get("friendly", "")
-                                    # Заменяем placeholder'ы на email
-                                    invalid_names = {"", "- -", "--", "[deleted]", "deleted"}
-                                    name = friendly if friendly and friendly.strip().lower() not in invalid_names else sn
-                                    contact = {
-                                        "sn": sn,
-                                        "name": name,
-                                        "friendly": friendly,
-                                        "type": buddy.get("userType", ""),
-                                    }
-                                    contacts_by_sn[sn] = contact
+            # Обрабатываем события
+            new_hist_dlg = 0
+            for event in events:
+                event_type = event.get("type")
+                event_data = event.get("eventData", event.get("data", {}))
 
-                    elif event_type == "histDlgState":
-                        # Диалоги/чаты из histDlgState - это чаты с перепиской
-                        sn = event_data.get("sn", "")
-                        if sn:
-                            new_hist_dlg += 1
-                            contacts_with_messages.add(sn)
-
-                            # Определяем имя чата
-                            name = sn
-                            if event_data.get("chat"):
-                                name = event_data["chat"].get("name", sn)
-                            elif event_data.get("friendly"):
-                                name = event_data.get("friendly")
-
-                            # Обновляем или добавляем контакт
-                            if sn in contacts_by_sn:
-                                contacts_by_sn[sn]["has_messages"] = True
-                                if name != sn:
-                                    contacts_by_sn[sn]["name"] = name
-                            else:
-                                contacts_by_sn[sn] = {
+                if event_type == "buddylist":
+                    # Контакты из buddylist
+                    groups = event_data.get("groups", [])
+                    for group in groups:
+                        buddies = group.get("buddies", [])
+                        for buddy in buddies:
+                            sn = buddy.get("aimId", "")
+                            if sn and sn not in contacts_by_sn:
+                                # Используем friendly если есть и не placeholder
+                                friendly = buddy.get("friendly", "")
+                                # Заменяем placeholder'ы на email
+                                invalid_names = {"", "- -", "--", "[deleted]", "deleted"}
+                                name = friendly if friendly and friendly.strip().lower() not in invalid_names else sn
+                                contact = {
                                     "sn": sn,
                                     "name": name,
-                                    "friendly": event_data.get("friendly", ""),
-                                    "type": "chat" if "@chat.agent" in sn else "contact",
-                                    "has_messages": True,
+                                    "friendly": friendly,
+                                    "type": buddy.get("userType", ""),
                                 }
+                                contacts_by_sn[sn] = contact
 
-                    elif event_type == "userState":
-                        # Track blocked/deleted users
-                        sn = event_data.get("sn", "")
-                        user_state = event_data.get("userState", {})
-                        if sn and user_state.get("state") == "blocked":
-                            blocked_users[sn] = user_state
+                elif event_type == "histDlgState":
+                    # Диалоги/чаты из histDlgState - это чаты с перепиской
+                    sn = event_data.get("sn", "")
+                    if sn:
+                        new_hist_dlg += 1
+                        contacts_with_messages.add(sn)
 
-                hist_dlg_count += new_hist_dlg
-                logger.debug(f"Iteration {iteration}: +{new_hist_dlg} histDlgState, total dialogs: {hist_dlg_count}")
+                        # Определяем имя чата
+                        name = sn
+                        if event_data.get("chat"):
+                            name = event_data["chat"].get("name", sn)
+                        elif event_data.get("friendly"):
+                            name = event_data.get("friendly")
 
-                # Условия выхода из цикла
-                if not next_url:
-                    logger.debug("No more fetchBaseURL, stopping")
-                    break
+                        # Обновляем или добавляем контакт
+                        if sn in contacts_by_sn:
+                            contacts_by_sn[sn]["has_messages"] = True
+                            if name != sn:
+                                contacts_by_sn[sn]["name"] = name
+                        else:
+                            contacts_by_sn[sn] = {
+                                "sn": sn,
+                                "name": name,
+                                "friendly": event_data.get("friendly", ""),
+                                "type": "chat" if "@chat.agent" in sn else "contact",
+                                "has_messages": True,
+                            }
 
-                # Если нет новых событий или только status события - можно остановиться
-                if not events:
-                    logger.debug("No events in response, stopping")
-                    break
+                elif event_type == "userState":
+                    # Track blocked/deleted users
+                    sn = event_data.get("sn", "")
+                    user_state = event_data.get("userState", {})
+                    if sn and user_state.get("state") == "blocked":
+                        blocked_users[sn] = user_state
 
-                # Если получили только status события несколько раз подряд - диалоги закончились
-                if all(e.get("type") == "status" for e in events) and iteration > 3:
-                    logger.debug("Only status events, dialogs likely complete")
-                    break
+            hist_dlg_count += new_hist_dlg
+            logger.debug(f"Iteration {iteration}: +{new_hist_dlg} histDlgState, total dialogs: {hist_dlg_count}")
 
-                # Обновляем URL для следующей итерации
-                current_url = next_url
-                # Добавляем короткий timeout
-                if "timeout=" not in current_url:
-                    current_url += "&timeout=1"
+            # Условия выхода из цикла
+            if not next_url:
+                logger.debug("No more fetchBaseURL, stopping")
+                break
 
-                # Небольшая пауза между запросами
-                await asyncio.sleep(0.1)
+            # Если нет новых событий или только status события - можно остановиться
+            if not events:
+                logger.debug("No events in response, stopping")
+                break
+
+            # Если получили только status события несколько раз подряд - диалоги закончились
+            if all(e.get("type") == "status" for e in events) and iteration > 3:
+                logger.debug("Only status events, dialogs likely complete")
+                break
+
+            # Обновляем URL для следующей итерации
+            current_url = next_url
+            # Добавляем короткий timeout
+            if "timeout=" not in current_url:
+                current_url += "&timeout=1"
+
+            # Небольшая пауза между запросами
+            await asyncio.sleep(0.1)
 
         logger.info(f"fetchEvents completed: {iteration} iterations, {total_events} total events, {hist_dlg_count} dialogs")
 
@@ -431,15 +461,17 @@ class VKTeamsClient:
         self,
         sn: str,
         from_msg_id: Optional[str] = None,
-        count: int = -50
+        count: int = None
     ) -> dict:
         """
         Получить историю сообщений чата
 
         sn: ID чата (например '687589145@chat.agent')
         from_msg_id: ID сообщения для пагинации
-        count: отрицательное = получать более старые
+        count: отрицательное = получать более старые (default: -MESSAGES_PER_REQUEST)
         """
+        if count is None:
+            count = -config.MESSAGES_PER_REQUEST
 
         params = {
             "sn": sn,
