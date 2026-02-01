@@ -7,15 +7,12 @@ VK Teams Export Bot для Telegram
 import asyncio
 import json
 import os
-import signal
 import tempfile
 import zipfile
 from datetime import datetime
 from typing import Optional
 
-from aiohttp import ClientTimeout
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -123,8 +120,7 @@ async def send_document_with_retry(
                 chat_id,
                 FSInputFile(file_path),
                 caption=caption,
-                read_timeout=300,  # 5 минут на чтение
-                write_timeout=300,  # 5 минут на запись
+                request_timeout=300,  # 5 минут на загрузку
             )
             return True
         except (asyncio.TimeoutError, TelegramNetworkError) as e:
@@ -1255,15 +1251,8 @@ async def main():
         print("   Получить токен: @BotFather в Telegram")
         return
 
-    # Настраиваем HTTP сессию с увеличенными таймаутами для больших файлов
-    http_timeout = ClientTimeout(
-        total=600,      # 10 минут общий таймаут
-        connect=30,     # 30 сек на подключение
-        sock_read=300,  # 5 минут на чтение
-        sock_connect=30,
-    )
-    session = AiohttpSession(timeout=http_timeout)
-    bot = Bot(token=config.TG_BOT_TOKEN, session=session)
+    # Создаём бота с увеличенными таймаутами для больших файлов
+    bot = Bot(token=config.TG_BOT_TOKEN)
     _bot = bot
     dp = Dispatcher()
     dp.include_router(router)
@@ -1278,37 +1267,13 @@ async def main():
     ]
     await bot.set_my_commands(commands)
 
-    # Setup shutdown handler
-    shutdown_event = asyncio.Event()
-
-    def signal_handler(sig, frame):
-        print(f"\n📢 Получен сигнал {sig}, начинаем остановку...")
-        shutdown_event.set()
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
     log_event("bot_start", data="Bot started")
     print("🚀 Бот запущен!")
     print("   Остановка: Ctrl+C")
 
     try:
-        # Start polling in background
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-
-        # Wait for shutdown signal
-        await shutdown_event.wait()
-
-        # Notify users before stopping
-        await notify_users_shutdown()
-
-        # Stop polling
-        await dp.stop_polling()
-        polling_task.cancel()
-
-    except asyncio.CancelledError:
-        pass
+        # Простой polling - aiogram сам обрабатывает сигналы
+        await dp.start_polling(bot)
     finally:
         log_event("bot_stop", data="Bot stopped")
         await bot.session.close()
