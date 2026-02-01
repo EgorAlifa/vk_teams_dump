@@ -9,6 +9,7 @@ import json
 import os
 import signal
 import tempfile
+import zipfile
 from datetime import datetime
 from typing import Optional
 
@@ -1044,20 +1045,24 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         "chats": all_exports
     }
 
-    # Создаём файлы
-    files_to_send = []
+    # Создаём файлы и упаковываем в ZIP
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Создаём файлы внутри архива
+            files_for_zip = []
+
             if format_type in ("json", "both"):
-                json_path = os.path.join(tmpdir, f"vkteams_export_{timestamp}.json")
+                json_filename = f"vkteams_export_{timestamp}.json"
+                json_path = os.path.join(tmpdir, json_filename)
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(final_export, f, ensure_ascii=False, indent=2)
-                files_to_send.append(("json", json_path))
+                files_for_zip.append((json_path, json_filename))
 
             if format_type in ("html", "both"):
-                html_path = os.path.join(tmpdir, f"vkteams_export_{timestamp}.html")
+                html_filename = f"vkteams_export_{timestamp}.html"
+                html_path = os.path.join(tmpdir, html_filename)
                 try:
                     html_content = format_as_html(final_export)
                 except Exception as html_err:
@@ -1065,32 +1070,51 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     html_content = f"<html><body><h1>Ошибка форматирования</h1><pre>{html_err}</pre></body></html>"
                 with open(html_path, "w", encoding="utf-8") as f:
                     f.write(html_content)
-                files_to_send.append(("html", html_path))
+                files_for_zip.append((html_path, html_filename))
 
-            # Отправляем файлы
+            # Создаём ZIP архив с максимальным сжатием
+            zip_filename = f"vkteams_export_{timestamp}.zip"
+            zip_path = os.path.join(tmpdir, zip_filename)
+
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+                for file_path, arcname in files_for_zip:
+                    zf.write(file_path, arcname)
+
+            # Проверяем размер ZIP
+            zip_size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+
+            # Отправляем файл
             status_text = "✅ <b>Экспорт завершён!</b>" if not critical_error else "⚠️ <b>Экспорт завершён с ошибками</b>"
             await safe_edit_text(
                 status_msg,
                 f"{status_text}\n\n"
                 f"📊 Чатов: {len(all_exports)}\n"
-                f"📨 Отправляю файлы...",
+                f"📦 Размер архива: {zip_size_mb:.1f} MB\n"
+                f"📨 Отправляю файл...",
                 parse_mode="HTML"
             )
 
-            for file_type, file_path in files_to_send:
+            if zip_size_mb > 50:
+                await callback.message.answer(
+                    f"⚠️ Архив слишком большой ({zip_size_mb:.1f} MB).\n"
+                    f"Лимит Telegram: 50 MB.\n\n"
+                    f"Попробуйте экспортировать меньше чатов.",
+                    parse_mode="HTML"
+                )
+            else:
                 try:
-                    # Use longer timeout for large files (5 minutes)
+                    # Увеличенный timeout для больших файлов
                     await asyncio.wait_for(
                         callback.message.answer_document(
-                            FSInputFile(file_path),
-                            caption=f"📦 VK Teams Export ({file_type.upper()})"
+                            FSInputFile(zip_path),
+                            caption=f"📦 VK Teams Export ({format_type.upper()})\n"
+                                    f"📊 {len(all_exports)} чатов, {sum(e.get('total_messages', 0) for e in all_exports)} сообщений"
                         ),
-                        timeout=300  # 5 minutes for large files
+                        timeout=300  # 5 минут на загрузку
                     )
                 except asyncio.TimeoutError:
                     await callback.message.answer(
-                        f"⚠️ Таймаут при отправке {file_type.upper()} файла. "
-                        f"Файл слишком большой.\n\n"
+                        f"⚠️ Таймаут при отправке файла.\n\n"
                         f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
                         parse_mode="HTML"
                     )
