@@ -273,6 +273,29 @@ body {{ font-family:-apple-system,system-ui,sans-serif; background:var(--bg); co
 /* Hide filtered */
 .chat.hidden {{ display:none; }}
 
+/* Search results */
+.search-results {{
+    max-height:300px; overflow-y:auto; margin-top:8px;
+    background:var(--card); border-radius:8px; display:none;
+}}
+.search-results.active {{ display:block; }}
+.search-result {{
+    padding:10px 14px; border-bottom:1px solid var(--border);
+    cursor:pointer; font-size:13px;
+}}
+.search-result:hover {{ background:var(--bg); }}
+.search-result:last-child {{ border-bottom:none; }}
+.search-result .chat-name {{ font-weight:600; color:var(--accent); }}
+.search-result .msg-text {{ color:var(--text2); margin-top:4px; }}
+.search-result .msg-text mark {{ background:#ffeb3b; padding:0 2px; border-radius:2px; }}
+@media(prefers-color-scheme:dark) {{
+    .search-result .msg-text mark {{ background:#5d4d00; color:#fff; }}
+}}
+.search-info {{
+    padding:10px 14px; color:var(--text2); font-size:12px;
+    border-bottom:1px solid var(--border);
+}}
+
 /* === DESKTOP: Two-panel layout with JS === */
 body.desktop .list {{ display:flex; max-width:1200px; height:100vh; overflow:hidden; }}
 body.desktop .sidebar {{
@@ -308,7 +331,8 @@ body.desktop .chat-header:hover {{ background:var(--border); }}
 </div>
 
 <div class="search">
-    <input type="text" id="search" placeholder="🔍 Поиск чата...">
+    <input type="text" id="search" placeholder="🔍 Поиск по чатам и сообщениям...">
+    <div id="search-results" class="search-results"></div>
 </div>
 
 <div class="list" id="list">
@@ -317,23 +341,126 @@ body.desktop .chat-header:hover {{ background:var(--border); }}
 
 <script>
 (function() {{
-    // Поиск (работает везде где есть JS)
+    // Поиск по чатам И сообщениям
     var search = document.getElementById('search');
-    var chats = document.querySelectorAll('.chat');
+    var searchResults = document.getElementById('search-results');
+    var chatEls = document.querySelectorAll('.chat');
+
+    // Индексируем все сообщения для быстрого поиска
+    var messageIndex = [];
+    chatEls.forEach(function(chatEl, chatIdx) {{
+        var chatName = chatEl.querySelector('.name');
+        chatName = chatName ? chatName.textContent : 'Чат ' + chatIdx;
+
+        var messages = chatEl.querySelectorAll('.msg');
+        messages.forEach(function(msgEl, msgIdx) {{
+            var textEl = msgEl.querySelector('.text');
+            var text = textEl ? textEl.textContent : '';
+            if (text) {{
+                messageIndex.push({{
+                    chatIdx: chatIdx,
+                    chatName: chatName,
+                    text: text,
+                    msgIdx: msgIdx,
+                    chatEl: chatEl,
+                    msgEl: msgEl
+                }});
+            }}
+        }});
+    }});
+
+    console.log('Indexed ' + messageIndex.length + ' messages for search');
+
+    var searchTimeout = null;
 
     if (search) {{
         search.addEventListener('input', function() {{
-            var q = this.value.toLowerCase();
-            chats.forEach(function(c) {{
-                var name = c.querySelector('.name');
-                var t = name ? name.textContent.toLowerCase() : '';
-                c.classList.toggle('hidden', q && t.indexOf(q) < 0);
-            }});
+            var q = this.value.toLowerCase().trim();
+
+            // Отложенный поиск чтобы не лагало
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(function() {{
+                // Сначала фильтруем чаты по названию
+                chatEls.forEach(function(c) {{
+                    var name = c.querySelector('.name');
+                    var t = name ? name.textContent.toLowerCase() : '';
+                    c.classList.toggle('hidden', q.length >= 2 && t.indexOf(q) < 0);
+                }});
+
+                // Сквозной поиск по сообщениям
+                if (q.length >= 2) {{
+                    var results = [];
+                    var seenChats = {{}};
+
+                    for (var i = 0; i < messageIndex.length && results.length < 50; i++) {{
+                        var item = messageIndex[i];
+                        if (item.text.toLowerCase().indexOf(q) >= 0) {{
+                            // Показываем чат в списке
+                            item.chatEl.classList.remove('hidden');
+
+                            // Добавляем в результаты (макс 3 на чат)
+                            seenChats[item.chatIdx] = (seenChats[item.chatIdx] || 0) + 1;
+                            if (seenChats[item.chatIdx] <= 3) {{
+                                results.push(item);
+                            }}
+                        }}
+                    }}
+
+                    // Показываем результаты
+                    if (results.length > 0) {{
+                        var html = '<div class="search-info">Найдено совпадений: ' + results.length + (results.length >= 50 ? '+' : '') + '</div>';
+                        results.forEach(function(r) {{
+                            var snippet = r.text.substring(0, 150);
+                            var highlighted = snippet.replace(new RegExp('(' + q.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&') + ')', 'gi'), '<mark>$1</mark>');
+                            html += '<div class="search-result" data-chat="' + r.chatIdx + '" data-msg="' + r.msgIdx + '">' +
+                                '<div class="chat-name">' + r.chatName + '</div>' +
+                                '<div class="msg-text">' + highlighted + '</div></div>';
+                        }});
+                        searchResults.innerHTML = html;
+                        searchResults.classList.add('active');
+
+                        // Клик по результату
+                        searchResults.querySelectorAll('.search-result').forEach(function(el) {{
+                            el.addEventListener('click', function() {{
+                                var chatIdx = parseInt(this.dataset.chat);
+                                var msgIdx = parseInt(this.dataset.msg);
+                                var chat = chatEls[chatIdx];
+
+                                // Открываем чат
+                                chat.setAttribute('open', '');
+
+                                // Скроллим к сообщению
+                                setTimeout(function() {{
+                                    var msgs = chat.querySelectorAll('.msg');
+                                    if (msgs[msgIdx]) {{
+                                        msgs[msgIdx].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                                        msgs[msgIdx].style.background = '#ffeb3b';
+                                        setTimeout(function() {{
+                                            msgs[msgIdx].style.background = '';
+                                        }}, 2000);
+                                    }}
+                                }}, 100);
+
+                                searchResults.classList.remove('active');
+                            }});
+                        }});
+                    }} else {{
+                        searchResults.innerHTML = '<div class="search-info">Ничего не найдено</div>';
+                        searchResults.classList.add('active');
+                    }}
+                }} else {{
+                    searchResults.classList.remove('active');
+                    searchResults.innerHTML = '';
+                    // Показываем все чаты
+                    chatEls.forEach(function(c) {{ c.classList.remove('hidden'); }});
+                }}
+            }}, 200);
         }});
     }}
 
     // Desktop: превращаем в двухпанельный интерфейс
     var isDesktop = window.innerWidth > 800;
+    var desktopPanels = [];  // Для поиска на desktop
 
     if (isDesktop) {{
         document.body.classList.add('desktop');
@@ -356,8 +483,7 @@ body.desktop .chat-header:hover {{ background:var(--border); }}
         list.appendChild(sidebar);
         list.appendChild(main);
 
-        // Создаём контент для каждого чата
-        var chatEls = sidebar.querySelectorAll('.chat');
+        // Создаём контент для каждого чата (используем оригинальные chatEls!)
         chatEls.forEach(function(chat, idx) {{
             var body = chat.querySelector('.chat-body');
             if (!body) return;
@@ -368,6 +494,7 @@ body.desktop .chat-header:hover {{ background:var(--border); }}
             panel.dataset.idx = idx;
             panel.innerHTML = body.innerHTML;
             main.appendChild(panel);
+            desktopPanels[idx] = panel;
 
             // Клик по чату
             var header = chat.querySelector('.chat-header');
@@ -377,7 +504,8 @@ body.desktop .chat-header:hover {{ background:var(--border); }}
                 // Закрываем все
                 chatEls.forEach(function(c) {{ c.removeAttribute('open'); }});
                 main.querySelectorAll('.main-chat').forEach(function(p) {{ p.classList.remove('active'); }});
-                main.querySelector('.main-placeholder').style.display = 'none';
+                var placeholder = main.querySelector('.main-placeholder');
+                if (placeholder) placeholder.style.display = 'none';
 
                 // Открываем выбранный
                 chat.setAttribute('open', '');
@@ -393,6 +521,43 @@ body.desktop .chat-header:hover {{ background:var(--border); }}
         if (chatEls.length > 0) {{
             chatEls[0].querySelector('.chat-header').click();
         }}
+
+        // Обновляем обработчик клика для результатов поиска на desktop
+        searchResults.addEventListener('click', function(e) {{
+            var result = e.target.closest('.search-result');
+            if (!result) return;
+
+            var chatIdx = parseInt(result.dataset.chat);
+            var msgIdx = parseInt(result.dataset.msg);
+            var chat = chatEls[chatIdx];
+            var panel = desktopPanels[chatIdx];
+
+            if (chat && panel) {{
+                // Закрываем все
+                chatEls.forEach(function(c) {{ c.removeAttribute('open'); }});
+                main.querySelectorAll('.main-chat').forEach(function(p) {{ p.classList.remove('active'); }});
+                var placeholder = main.querySelector('.main-placeholder');
+                if (placeholder) placeholder.style.display = 'none';
+
+                // Открываем выбранный
+                chat.setAttribute('open', '');
+                panel.classList.add('active');
+
+                // Скроллим к сообщению в панели
+                setTimeout(function() {{
+                    var msgs = panel.querySelectorAll('.msg');
+                    if (msgs[msgIdx]) {{
+                        msgs[msgIdx].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                        msgs[msgIdx].style.background = '#ffeb3b';
+                        setTimeout(function() {{
+                            msgs[msgIdx].style.background = '';
+                        }}, 2000);
+                    }}
+                }}, 100);
+
+                searchResults.classList.remove('active');
+            }}
+        }});
     }}
 }})();
 </script>
