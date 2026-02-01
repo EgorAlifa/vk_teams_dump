@@ -329,6 +329,95 @@ if [ ! -f ".env" ]; then
 fi
 
 #############################################
+# 5.1. Настройка ресурсов машины
+#############################################
+echo -e "\n${BLUE}Настройка ресурсов машины...${NC}"
+echo -e "${YELLOW}Укажите ресурсы ВАШЕЙ МАШИНЫ (не контейнера)${NC}"
+echo ""
+
+# Определяем ресурсы автоматически
+AUTO_CPU=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "2")
+AUTO_RAM=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}' || echo "4")
+
+echo "Автоопределение: CPU=$AUTO_CPU ядер, RAM=${AUTO_RAM}GB"
+echo ""
+
+read -p "CPU ядер на машине [$AUTO_CPU]: " MACHINE_CPU
+MACHINE_CPU=${MACHINE_CPU:-$AUTO_CPU}
+
+read -p "RAM в GB на машине [$AUTO_RAM]: " MACHINE_RAM
+MACHINE_RAM=${MACHINE_RAM:-$AUTO_RAM}
+
+# Рассчитываем лимиты для контейнера (75% от машины, но не меньше минимума)
+# CPU: 75% от ядер, минимум 0.5
+BOT_CPU=$(echo "$MACHINE_CPU * 0.75" | bc -l 2>/dev/null || echo "1.5")
+BOT_CPU=$(printf "%.1f" $BOT_CPU)
+
+# RAM: 60% от машины, минимум 1GB, в мегабайтах
+BOT_RAM_GB=$(echo "$MACHINE_RAM * 0.6" | bc -l 2>/dev/null || echo "2")
+BOT_RAM_MB=$(printf "%.0f" $(echo "$BOT_RAM_GB * 1024" | bc -l 2>/dev/null || echo "2048"))
+
+# Минимальные значения
+if [ "$BOT_RAM_MB" -lt 1024 ]; then BOT_RAM_MB=1024; fi
+
+echo ""
+echo -e "${GREEN}Лимиты для контейнера бота:${NC}"
+echo -e "  CPU: ${BOT_CPU} ядер"
+echo -e "  RAM: ${BOT_RAM_MB}MB"
+echo ""
+
+# Обновляем docker-compose.yml
+echo -e "${YELLOW}Обновляю docker-compose.yml с лимитами...${NC}"
+cat > docker-compose.yml << COMPOSE_EOF
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: vkteams_export_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '${BOT_CPU}'
+          memory: ${BOT_RAM_MB}M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Lightweight stats dashboard (optional)
+  stats:
+    build: .
+    container_name: vkteams_stats
+    restart: unless-stopped
+    command: ["python", "stats_server.py"]
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+    depends_on:
+      - bot
+COMPOSE_EOF
+
+echo -e "${GREEN}✓ docker-compose.yml обновлён${NC}"
+
+#############################################
 # Создание скрипта запуска
 #############################################
 cat > run.sh << 'EOF'

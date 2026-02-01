@@ -17,11 +17,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 512M
+          cpus: '1.5'
+          memory: 2560M
         reservations:
           cpus: '0.25'
-          memory: 128M
+          memory: 256M
 
   # Lightweight stats dashboard (optional)
   stats:
