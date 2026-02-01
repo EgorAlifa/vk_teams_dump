@@ -11,6 +11,6 @@ VKTEAMS_API_BASE = os.getenv("VKTEAMS_API_BASE", "https://u.myteam.vmailru.net/a
 VKTEAMS_AUTH_BASE = os.getenv("VKTEAMS_AUTH_BASE", "https://u.myteam.vmailru.net/auth")
 
 # Настройки экспорта
-MESSAGES_PER_REQUEST = 200  # Увеличено с 50 для ускорения (API поддерживает до 1000)
+MESSAGES_PER_REQUEST = 900  # Максимум ~1000, используем 900 для надёжности
 DELAY_BETWEEN_REQUESTS = 0.3  # Уменьшено с 0.5 благодаря connection pooling
-MAX_FILE_SIZE_MB = 50  # максимальный размер файла для скачивания
+MAX_FILE_SIZE_MB = 50  # Лимит Telegram для файлов
