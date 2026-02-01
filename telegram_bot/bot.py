@@ -1032,6 +1032,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     client = VKTeamsClient(session)
     all_exports = []
     errors = []
+    no_dialogs = []  # Контакты без диалога (не ошибка)
     critical_error = None
 
     # Получаем данные о чатах заранее
@@ -1066,7 +1067,12 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 await asyncio.sleep(0.3)
 
             except Exception as e:
-                errors.append(f"{sn}: {str(e)}")
+                err_str = str(e)
+                if "No such dialogue" in err_str:
+                    # Это не ошибка - просто нет диалога с контактом
+                    no_dialogs.append(sn)
+                else:
+                    errors.append(f"{sn}: {err_str}")
 
     except Exception as e:
         critical_error = str(e)
@@ -1194,12 +1200,16 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         error_text += f"\n\n⚠️ Ошибки ({len(errors)}):\n" + "\n".join(errors[:5])
         if len(errors) > 5:
             error_text += f"\n... и ещё {len(errors) - 5}"
+    if no_dialogs:
+        error_text += f"\n\nℹ️ Нет диалога ({len(no_dialogs)}): " + ", ".join(no_dialogs[:5])
+        if len(no_dialogs) > 5:
+            error_text += f" и ещё {len(no_dialogs) - 5}"
 
     support_text = ""
     if critical_error or errors:
         support_text = f"\n\nПри проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>"
 
-    log_event("export_complete", user_id, f"chats={len(all_exports)},messages={total_msgs},errors={len(errors)}")
+    log_event("export_complete", user_id, f"chats={len(all_exports)},messages={total_msgs},errors={len(errors)},no_dialogs={len(no_dialogs)}")
 
     await callback.message.answer(
         f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"
