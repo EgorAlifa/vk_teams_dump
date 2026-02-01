@@ -1,5 +1,6 @@
 """
 Форматирование экспорта VK Teams в различные форматы
+Стиль VK Teams - синий/белый
 """
 
 import json
@@ -14,13 +15,8 @@ def format_as_json(data: dict) -> str:
 
 def format_as_html(data: dict) -> str:
     """
-    Форматирование в HTML - универсальный интерфейс
-
-    Работает везде:
-    - iOS Files (без JS): details/summary раскрываются нативно
-    - iOS Safari (с JS): улучшенный интерфейс
-    - Android: работает везде
-    - ПК (с JS): двухпанельный интерфейс как мессенджер
+    Форматирование в HTML - стиль VK Teams
+    Синий/белый дизайн, вкладки поиска, поиск внутри чата
     """
 
     chats = data.get("chats", [])
@@ -40,20 +36,25 @@ def format_as_html(data: dict) -> str:
         # Последнее сообщение для превью
         last_msg = messages[-1] if messages else {}
         last_text = ""
+        last_sender = ""
         if last_msg:
             parts = last_msg.get("parts", [])
             for p in parts:
                 if p.get("mediaType") == "text":
-                    last_text = p.get("text", "")[:50]
+                    last_text = p.get("text", "")[:60]
                     break
             if not last_text:
-                last_text = last_msg.get("text", "")[:50]
-        last_text = escape(last_text) if last_text else "..."
+                last_text = last_msg.get("text", "")[:60]
+            last_sender = last_msg.get("senderNick") or last_msg.get("friendly") or ""
+        last_text = escape(last_text) if last_text else ""
+        last_sender = escape(last_sender[:20]) if last_sender else ""
 
         # Время последнего сообщения
         last_time = ""
         if last_msg.get("time"):
             last_time = datetime.fromtimestamp(last_msg["time"]).strftime("%d.%m")
+
+        avatar_letter = chat_name[0].upper() if chat_name else "?"
 
         # Собираем участников
         chat_members = {}
@@ -97,31 +98,43 @@ def format_as_html(data: dict) -> str:
             </details>
             '''
 
-        # Чат как details/summary - работает ВЕЗДЕ без JS
+        # Превью
+        preview = f'<b>{last_sender}:</b> {last_text}' if last_sender and not is_personal else last_text
+
         chats_html += f'''
-<details class="chat" data-id="{idx}">
-    <summary class="chat-header">
-        <span class="avatar">{chat_name[0].upper()}</span>
-        <span class="info">
-            <span class="name">{chat_name[:35]}{"…" if len(chat_name) > 35 else ""}</span>
-            <span class="preview">{last_text}</span>
-        </span>
-        <span class="meta">
-            <span class="time">{last_time}</span>
-            <span class="count">{msg_count}</span>
-        </span>
-    </summary>
-    <div class="chat-body">
-        <div class="chat-title">
-            <strong>{chat_name}</strong>
-            <span>{msg_count} сообщений</span>
-        </div>
-        {pinned_html}
-        <div class="messages">
-            {messages_html}
-        </div>
+<div class="chat-item" data-idx="{idx}">
+    <div class="avatar">{avatar_letter}</div>
+    <div class="chat-info">
+        <div class="chat-name">{chat_name[:35]}{"…" if len(chat_name) > 35 else ""}</div>
+        <div class="chat-preview">{preview if preview else "..."}</div>
     </div>
-</details>
+    <div class="chat-meta">
+        <span class="chat-time">{last_time}</span>
+        <span class="chat-count">{msg_count}</span>
+    </div>
+</div>
+<div class="chat-content" data-idx="{idx}">
+    <div class="content-header">
+        <button class="back-btn">←</button>
+        <div class="avatar sm">{avatar_letter}</div>
+        <div class="content-title">
+            <div class="title-name">{chat_name}</div>
+            <div class="title-sub">{msg_count} сообщений</div>
+        </div>
+        <button class="search-btn">🔍</button>
+    </div>
+    <div class="content-search">
+        <input type="text" placeholder="Поиск в чате...">
+        <span class="search-nav">
+            <span class="search-count"></span>
+            <button class="prev-btn">↑</button>
+            <button class="next-btn">↓</button>
+        </span>
+        <button class="close-btn">✕</button>
+    </div>
+    {pinned_html}
+    <div class="messages">{messages_html}</div>
+</div>
 '''
 
     return f'''<!DOCTYPE html>
@@ -131,437 +144,582 @@ def format_as_html(data: dict) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
 <title>VK Teams Export</title>
 <style>
-:root {{
-    --bg:#f5f5f5; --card:#fff; --text:#222; --text2:#666;
-    --accent:#00a884; --border:#e0e0e0; --in:#fff; --out:#dcf8c6;
-}}
-@media(prefers-color-scheme:dark) {{
-    :root {{
-        --bg:#0a0a0a; --card:#1a1a1a; --text:#eee; --text2:#888;
-        --accent:#00a884; --border:#333; --in:#1a1a1a; --out:#054640;
-    }}
-}}
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family:-apple-system,system-ui,sans-serif; background:var(--bg); color:var(--text); }}
-
-/* Header */
-.header {{
-    position:sticky; top:0; z-index:100;
-    background:var(--card); padding:12px 16px;
-    border-bottom:1px solid var(--border);
+:root {{
+    --bg: #f0f2f5;
+    --card: #ffffff;
+    --text: #19191a;
+    --text2: #818c99;
+    --accent: #0077ff;
+    --accent-light: #e3f0ff;
+    --border: #dce1e6;
+    --hover: #f5f7fa;
+    --out: #cce4ff;
+    --highlight: #fff3a8;
 }}
-.header h1 {{ font-size:18px; margin-bottom:4px; }}
-.header small {{ color:var(--text2); font-size:12px; }}
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+}}
+
+/* === LAYOUT === */
+.container {{
+    display: flex;
+    height: 100vh;
+    max-width: 1400px;
+    margin: 0 auto;
+    background: var(--card);
+    box-shadow: 0 0 20px rgba(0,0,0,0.08);
+}}
+
+/* === SIDEBAR === */
+.sidebar {{
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+}}
+
+.header {{
+    padding: 14px 16px;
+    background: var(--accent);
+    color: #fff;
+}}
+.header h1 {{ font-size: 15px; font-weight: 600; }}
+.header small {{ font-size: 11px; opacity: 0.85; }}
 
 /* Search */
-.search {{
-    position:sticky; top:58px; z-index:99;
-    background:var(--card); padding:8px 16px;
-    border-bottom:1px solid var(--border);
+.search-box {{
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
 }}
-.search input {{
-    width:100%; padding:10px 14px; border:none; border-radius:8px;
-    background:var(--bg); color:var(--text); font-size:15px;
+.search-input {{
+    width: 100%;
+    padding: 9px 12px 9px 34px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23818c99' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") 10px center no-repeat;
+    outline: none;
+}}
+.search-input:focus {{ border-color: var(--accent); }}
+
+/* Tabs */
+.tabs {{
+    display: flex;
+    border-bottom: 1px solid var(--border);
+}}
+.tab {{
+    flex: 1;
+    padding: 11px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    text-align: center;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+}}
+.tab:hover {{ color: var(--accent); }}
+.tab.active {{
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}}
+
+/* Stats */
+.stats {{
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--text2);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
 }}
 
 /* Chat list */
-.list {{ max-width:800px; margin:0 auto; }}
-
-/* Each chat - details/summary */
-.chat {{
-    background:var(--card);
-    border-bottom:1px solid var(--border);
+.chat-list {{
+    flex: 1;
+    overflow-y: auto;
 }}
-.chat[open] {{ background:var(--bg); }}
-.chat[open] .chat-header {{ background:var(--accent); color:#fff; }}
-.chat[open] .chat-header .text2,
-.chat[open] .chat-header .time {{ color:rgba(255,255,255,0.8); }}
-
-.chat-header {{
-    display:flex; align-items:center; gap:12px;
-    padding:12px 16px; cursor:pointer;
-    list-style:none;
+.chat-item {{
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    gap: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
 }}
-.chat-header::-webkit-details-marker {{ display:none; }}
+.chat-item:hover {{ background: var(--hover); }}
+.chat-item.active {{ background: var(--accent-light); }}
+.chat-item.hidden {{ display: none; }}
 
 .avatar {{
-    width:48px; height:48px; border-radius:50%;
-    background:var(--accent); color:#fff;
-    display:flex; align-items:center; justify-content:center;
-    font-size:20px; font-weight:500; flex-shrink:0;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    font-weight: 500;
+    flex-shrink: 0;
 }}
-.chat[open] .avatar {{ background:rgba(255,255,255,0.2); }}
+.avatar.sm {{ width: 36px; height: 36px; font-size: 14px; }}
 
-.info {{ flex:1; min-width:0; }}
-.name {{ display:block; font-weight:500; font-size:15px; }}
-.preview {{ display:block; font-size:13px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.chat-info {{ flex: 1; min-width: 0; }}
+.chat-name {{
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}}
+.chat-preview {{
+    font-size: 13px;
+    color: var(--text2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}}
+.chat-preview b {{ color: var(--text); font-weight: 500; }}
 
-.meta {{ text-align:right; flex-shrink:0; }}
-.time {{ display:block; font-size:11px; color:var(--text2); }}
-.count {{
-    display:inline-block; margin-top:4px;
-    background:var(--accent); color:#fff;
-    font-size:11px; padding:2px 8px; border-radius:10px;
+.chat-meta {{ text-align: right; flex-shrink: 0; }}
+.chat-time {{ display: block; font-size: 12px; color: var(--text2); }}
+.chat-count {{
+    display: inline-block;
+    margin-top: 4px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 10px;
 }}
 
-/* Chat body */
-.chat-body {{ padding:12px; background:var(--bg); }}
-
-.chat-title {{
-    background:var(--card); padding:12px 16px; border-radius:8px;
-    margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;
+/* === SEARCH RESULTS === */
+.search-results {{
+    flex: 1;
+    overflow-y: auto;
+    display: none;
 }}
-.chat-title strong {{ font-size:16px; }}
-.chat-title span {{ font-size:12px; color:var(--text2); }}
+.search-results.active {{ display: block; }}
+.search-result {{
+    display: flex;
+    align-items: flex-start;
+    padding: 10px 14px;
+    gap: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+}}
+.search-result:hover {{ background: var(--hover); }}
+.result-info {{ flex: 1; min-width: 0; }}
+.result-chat {{ font-size: 14px; font-weight: 500; }}
+.result-sender {{ font-size: 13px; color: var(--accent); font-weight: 500; }}
+.result-text {{
+    font-size: 13px;
+    color: var(--text2);
+    margin-top: 3px;
+    line-height: 1.35;
+}}
+.result-text mark {{
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 0 2px;
+    border-radius: 2px;
+}}
+.result-time {{ font-size: 12px; color: var(--text2); }}
+
+/* === MAIN CONTENT === */
+.main {{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+}}
+.main-placeholder {{
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text2);
+}}
+
+/* Chat content */
+.chat-content {{ display: none; flex-direction: column; height: 100%; }}
+.chat-content.active {{ display: flex; }}
+
+.content-header {{
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    gap: 12px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+}}
+.back-btn {{
+    display: none;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: var(--bg);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+}}
+.content-title {{ flex: 1; }}
+.title-name {{ font-size: 15px; font-weight: 600; }}
+.title-sub {{ font-size: 12px; color: var(--text2); }}
+.search-btn {{
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 18px;
+    border-radius: 6px;
+}}
+.search-btn:hover {{ background: var(--bg); }}
+
+/* Content search */
+.content-search {{
+    display: none;
+    align-items: center;
+    padding: 8px 14px;
+    gap: 8px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+}}
+.content-search.active {{ display: flex; }}
+.content-search input {{
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    outline: none;
+}}
+.content-search input:focus {{ border-color: var(--accent); }}
+.search-nav {{ display: flex; align-items: center; gap: 4px; }}
+.search-count {{ font-size: 12px; color: var(--text2); min-width: 60px; text-align: center; }}
+.content-search button {{
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}}
+.content-search button:hover {{ background: var(--bg); }}
+.close-btn {{ width: 32px !important; }}
 
 /* Pinned */
-.pinned {{ margin-bottom:12px; }}
+.pinned {{ margin: 12px 16px; background: var(--card); border-radius: 8px; }}
 .pinned summary {{
-    background:#fff3cd; color:#856404; padding:10px 14px;
-    border-radius:8px; cursor:pointer; font-size:13px;
-    list-style:none;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--accent);
+    list-style: none;
 }}
-.pinned summary::-webkit-details-marker {{ display:none; }}
-@media(prefers-color-scheme:dark) {{
-    .pinned summary {{ background:#3d3200; color:#ffc107; }}
-}}
-.pinned-list {{
-    background:var(--card); border-radius:8px; margin-top:8px;
-    padding:10px; max-height:250px; overflow-y:auto;
-}}
+.pinned summary::-webkit-details-marker {{ display: none; }}
+.pinned-list {{ padding: 8px; max-height: 180px; overflow-y: auto; }}
 
 /* Messages */
-.messages {{ display:flex; flex-direction:column; gap:4px; }}
-
-.date-sep {{ text-align:center; margin:16px 0; }}
+.messages {{
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}}
+.date-sep {{ text-align: center; margin: 14px 0; }}
 .date-sep span {{
-    background:var(--card); padding:4px 12px; border-radius:12px;
-    font-size:11px; color:var(--text2);
+    background: rgba(0,0,0,0.08);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--text2);
 }}
 
 .msg {{
-    max-width:80%; padding:8px 12px; border-radius:12px;
-    background:var(--in); font-size:14px; word-wrap:break-word;
+    max-width: 70%;
+    padding: 9px 12px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.4;
+    background: var(--card);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    word-wrap: break-word;
 }}
-.msg.out {{ background:var(--out); align-self:flex-end; }}
+.msg.out {{
+    background: var(--out);
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+}}
+.msg:not(.out) {{
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+}}
+.msg.highlight {{ background: var(--highlight) !important; }}
 
-.msg .sender {{ font-size:12px; font-weight:600; color:var(--accent); margin-bottom:2px; }}
-.msg .text {{ white-space:pre-wrap; line-height:1.4; }}
-.msg .tm {{ font-size:10px; color:var(--text2); text-align:right; margin-top:2px; }}
+.msg .sender {{ font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }}
+.msg .text {{ white-space: pre-wrap; }}
+.msg .tm {{ font-size: 11px; color: var(--text2); text-align: right; margin-top: 3px; }}
 
 .msg .quote {{
-    border-left:3px solid var(--accent); padding:4px 8px; margin:4px 0;
-    background:rgba(0,0,0,0.05); border-radius:0 6px 6px 0; font-size:12px;
+    border-left: 3px solid var(--accent);
+    padding: 5px 10px;
+    margin: 5px 0;
+    background: rgba(0,119,255,0.08);
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
 }}
-.msg .quote b {{ color:var(--accent); }}
+.msg .quote b {{ color: var(--accent); }}
 
 .msg .file {{
-    display:flex; gap:8px; align-items:center;
-    background:rgba(0,0,0,0.05); padding:8px; border-radius:6px; margin-top:6px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: rgba(0,0,0,0.04);
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-top: 6px;
 }}
-.msg .file a {{ color:var(--accent); text-decoration:none; font-size:13px; }}
+.msg .file a {{ color: var(--accent); text-decoration: none; font-size: 13px; }}
+.msg .file a:hover {{ text-decoration: underline; }}
 
-/* Mobile tweaks */
-@media(max-width:600px) {{
-    .chat-header {{ padding:10px 12px; gap:10px; }}
-    .avatar {{ width:42px; height:42px; font-size:18px; }}
-    .name {{ font-size:14px; }}
-    .preview {{ font-size:12px; }}
-    .msg {{ max-width:88%; }}
+/* === MOBILE === */
+@media (max-width: 768px) {{
+    .container {{ flex-direction: column; }}
+    .sidebar {{ width: 100%; height: 100%; }}
+    .sidebar.hidden {{ display: none; }}
+    .main {{ display: none; width: 100%; height: 100%; }}
+    .main.active {{ display: flex; }}
+    .back-btn {{ display: flex; align-items: center; justify-content: center; }}
+    .msg {{ max-width: 85%; }}
+    .messages {{ padding: 12px; }}
 }}
-
-/* Hide filtered */
-.chat.hidden {{ display:none; }}
-
-/* Search results */
-.search-results {{
-    max-height:300px; overflow-y:auto; margin-top:8px;
-    background:var(--card); border-radius:8px; display:none;
-}}
-.search-results.active {{ display:block; }}
-.search-result {{
-    padding:10px 14px; border-bottom:1px solid var(--border);
-    cursor:pointer; font-size:13px;
-}}
-.search-result:hover {{ background:var(--bg); }}
-.search-result:last-child {{ border-bottom:none; }}
-.search-result .chat-name {{ font-weight:600; color:var(--accent); }}
-.search-result .msg-text {{ color:var(--text2); margin-top:4px; }}
-.search-result .msg-text mark {{ background:#ffeb3b; padding:0 2px; border-radius:2px; }}
-@media(prefers-color-scheme:dark) {{
-    .search-result .msg-text mark {{ background:#5d4d00; color:#fff; }}
-}}
-.search-info {{
-    padding:10px 14px; color:var(--text2); font-size:12px;
-    border-bottom:1px solid var(--border);
-}}
-
-/* === DESKTOP: Two-panel layout with JS === */
-body.desktop .list {{ display:flex; max-width:1200px; height:100vh; overflow:hidden; }}
-body.desktop .sidebar {{
-    width:360px; flex-shrink:0; overflow-y:auto;
-    border-right:1px solid var(--border); background:var(--card);
-}}
-body.desktop .main {{
-    flex:1; display:flex; flex-direction:column;
-    background:var(--bg); overflow:hidden;
-}}
-body.desktop .main-placeholder {{
-    flex:1; display:flex; align-items:center; justify-content:center;
-    color:var(--text2); font-size:16px;
-}}
-body.desktop .main-chat {{
-    display:none; flex-direction:column; height:100%; overflow:hidden;
-}}
-body.desktop .main-chat.active {{ display:flex; }}
-body.desktop .main-chat .chat-title {{ margin:0; border-radius:0; border-bottom:1px solid var(--border); }}
-body.desktop .main-chat .messages {{ flex:1; overflow-y:auto; padding:16px 40px; }}
-
-body.desktop .chat {{ border-bottom:1px solid var(--border); }}
-body.desktop .chat .chat-body {{ display:none !important; }}
-body.desktop .chat[open] .chat-header {{ background:var(--hover, var(--accent)); }}
-body.desktop .chat-header:hover {{ background:var(--border); }}
 </style>
 </head>
 <body>
 
-<div class="header">
-    <h1>📦 VK Teams Export</h1>
-    <small>📅 {export_date} · 💬 {len(chats)} чатов · 📨 {total_messages} сообщений</small>
-</div>
-
-<div class="search">
-    <input type="text" id="search" placeholder="🔍 Поиск по чатам и сообщениям...">
-    <div id="search-results" class="search-results"></div>
-</div>
-
-<div class="list" id="list">
-    {chats_html}
+<div class="container">
+    <div class="sidebar" id="sidebar">
+        <div class="header">
+            <h1>📦 VK Teams Export</h1>
+            <small>📅 {export_date} · 💬 {len(chats)} чатов · 📨 {total_messages} сообщений</small>
+        </div>
+        <div class="search-box">
+            <input type="text" class="search-input" id="searchInput" placeholder="Поиск...">
+        </div>
+        <div class="tabs">
+            <div class="tab active" data-tab="chats">Контакты и группы</div>
+            <div class="tab" data-tab="messages">Сообщения</div>
+        </div>
+        <div class="stats" id="stats">Контактов и групп: {len(chats)}</div>
+        <div class="chat-list" id="chatList">{chats_html}</div>
+        <div class="search-results" id="searchResults"></div>
+    </div>
+    <div class="main" id="main">
+        <div class="main-placeholder">👈 Выберите чат</div>
+    </div>
 </div>
 
 <script>
 (function() {{
-    // Поиск по чатам И сообщениям
-    var search = document.getElementById('search');
-    var searchResults = document.getElementById('search-results');
-    var chatEls = document.querySelectorAll('.chat');
+    var sidebar = document.getElementById('sidebar');
+    var main = document.getElementById('main');
+    var searchInput = document.getElementById('searchInput');
+    var chatList = document.getElementById('chatList');
+    var searchResults = document.getElementById('searchResults');
+    var stats = document.getElementById('stats');
+    var tabs = document.querySelectorAll('.tab');
+    var chatItems = document.querySelectorAll('.chat-item');
+    var chatContents = document.querySelectorAll('.chat-content');
+    var currentTab = 'chats';
+    var isMobile = window.innerWidth <= 768;
 
-    // Индексируем все сообщения для быстрого поиска
-    var messageIndex = [];
-    chatEls.forEach(function(chatEl, chatIdx) {{
-        var chatName = chatEl.querySelector('.name');
-        chatName = chatName ? chatName.textContent : 'Чат ' + chatIdx;
-
-        var messages = chatEl.querySelectorAll('.msg');
-        messages.forEach(function(msgEl, msgIdx) {{
-            var textEl = msgEl.querySelector('.text');
-            var text = textEl ? textEl.textContent : '';
-            if (text) {{
-                messageIndex.push({{
-                    chatIdx: chatIdx,
-                    chatName: chatName,
-                    text: text,
-                    msgIdx: msgIdx,
-                    chatEl: chatEl,
-                    msgEl: msgEl
-                }});
+    // Index messages
+    var msgIndex = [];
+    chatContents.forEach(function(c, ci) {{
+        var item = chatItems[ci];
+        var name = item ? item.querySelector('.chat-name').textContent : '';
+        c.querySelectorAll('.msg').forEach(function(m, mi) {{
+            var t = m.querySelector('.text');
+            var s = m.querySelector('.sender');
+            if (t && t.textContent) {{
+                msgIndex.push({{ ci: ci, mi: mi, name: name, text: t.textContent, sender: s ? s.textContent : '' }});
             }}
         }});
     }});
 
-    console.log('Indexed ' + messageIndex.length + ' messages for search');
+    // Tabs
+    tabs.forEach(function(tab) {{
+        tab.onclick = function() {{
+            tabs.forEach(function(t) {{ t.classList.remove('active'); }});
+            this.classList.add('active');
+            currentTab = this.dataset.tab;
+            doSearch();
+        }};
+    }});
 
-    var searchTimeout = null;
+    // Search
+    var st;
+    searchInput.oninput = function() {{ clearTimeout(st); st = setTimeout(doSearch, 150); }};
 
-    if (search) {{
-        search.addEventListener('input', function() {{
-            var q = this.value.toLowerCase().trim();
-
-            // Отложенный поиск чтобы не лагало
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(function() {{
-                // Сначала фильтруем чаты по названию
-                chatEls.forEach(function(c) {{
-                    var name = c.querySelector('.name');
-                    var t = name ? name.textContent.toLowerCase() : '';
-                    c.classList.toggle('hidden', q.length >= 2 && t.indexOf(q) < 0);
-                }});
-
-                // Сквозной поиск по сообщениям
-                if (q.length >= 2) {{
-                    var results = [];
-                    var seenChats = {{}};
-
-                    for (var i = 0; i < messageIndex.length && results.length < 50; i++) {{
-                        var item = messageIndex[i];
-                        if (item.text.toLowerCase().indexOf(q) >= 0) {{
-                            // Показываем чат в списке
-                            item.chatEl.classList.remove('hidden');
-
-                            // Добавляем в результаты (макс 3 на чат)
-                            seenChats[item.chatIdx] = (seenChats[item.chatIdx] || 0) + 1;
-                            if (seenChats[item.chatIdx] <= 3) {{
-                                results.push(item);
-                            }}
-                        }}
-                    }}
-
-                    // Показываем результаты
-                    if (results.length > 0) {{
-                        var html = '<div class="search-info">Найдено совпадений: ' + results.length + (results.length >= 50 ? '+' : '') + '</div>';
-                        results.forEach(function(r) {{
-                            var snippet = r.text.substring(0, 150);
-                            var highlighted = snippet.replace(new RegExp('(' + q.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&') + ')', 'gi'), '<mark>$1</mark>');
-                            html += '<div class="search-result" data-chat="' + r.chatIdx + '" data-msg="' + r.msgIdx + '">' +
-                                '<div class="chat-name">' + r.chatName + '</div>' +
-                                '<div class="msg-text">' + highlighted + '</div></div>';
-                        }});
-                        searchResults.innerHTML = html;
-                        searchResults.classList.add('active');
-
-                        // Клик по результату
-                        searchResults.querySelectorAll('.search-result').forEach(function(el) {{
-                            el.addEventListener('click', function() {{
-                                var chatIdx = parseInt(this.dataset.chat);
-                                var msgIdx = parseInt(this.dataset.msg);
-                                var chat = chatEls[chatIdx];
-
-                                // Открываем чат
-                                chat.setAttribute('open', '');
-
-                                // Скроллим к сообщению
-                                setTimeout(function() {{
-                                    var msgs = chat.querySelectorAll('.msg');
-                                    if (msgs[msgIdx]) {{
-                                        msgs[msgIdx].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                                        msgs[msgIdx].style.background = '#ffeb3b';
-                                        setTimeout(function() {{
-                                            msgs[msgIdx].style.background = '';
-                                        }}, 2000);
-                                    }}
-                                }}, 100);
-
-                                searchResults.classList.remove('active');
-                            }});
-                        }});
-                    }} else {{
-                        searchResults.innerHTML = '<div class="search-info">Ничего не найдено</div>';
-                        searchResults.classList.add('active');
-                    }}
-                }} else {{
-                    searchResults.classList.remove('active');
-                    searchResults.innerHTML = '';
-                    // Показываем все чаты
-                    chatEls.forEach(function(c) {{ c.classList.remove('hidden'); }});
-                }}
-            }}, 200);
-        }});
+    function doSearch() {{
+        var q = searchInput.value.toLowerCase().trim();
+        if (currentTab === 'chats') {{
+            chatList.style.display = '';
+            searchResults.classList.remove('active');
+            var vis = 0;
+            chatItems.forEach(function(it) {{
+                var n = it.querySelector('.chat-name').textContent.toLowerCase();
+                var show = !q || n.indexOf(q) >= 0;
+                it.classList.toggle('hidden', !show);
+                if (show) vis++;
+            }});
+            stats.textContent = 'Контактов и групп: ' + vis;
+        }} else {{
+            chatList.style.display = 'none';
+            searchResults.classList.add('active');
+            if (q.length < 2) {{
+                searchResults.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text2)">Введите минимум 2 символа</div>';
+                stats.textContent = 'Сообщений: 0';
+                return;
+            }}
+            var res = [];
+            for (var i = 0; i < msgIndex.length && res.length < 100; i++) {{
+                if (msgIndex[i].text.toLowerCase().indexOf(q) >= 0) res.push(msgIndex[i]);
+            }}
+            stats.textContent = 'Сообщений: ' + res.length + (res.length >= 100 ? '+' : '');
+            if (!res.length) {{
+                searchResults.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text2)">Ничего не найдено</div>';
+                return;
+            }}
+            var h = '';
+            res.forEach(function(r) {{
+                var snip = r.text.substring(0, 180);
+                var hl = snip.replace(new RegExp('(' + q.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&') + ')', 'gi'), '<mark>$1</mark>');
+                h += '<div class="search-result" data-ci="' + r.ci + '" data-mi="' + r.mi + '">' +
+                    '<div class="avatar sm">' + (r.name[0] || '?').toUpperCase() + '</div>' +
+                    '<div class="result-info"><div class="result-chat">' + r.name + '</div>' +
+                    (r.sender ? '<div class="result-sender">' + r.sender + '</div>' : '') +
+                    '<div class="result-text">' + hl + '</div></div></div>';
+            }});
+            searchResults.innerHTML = h;
+            searchResults.querySelectorAll('.search-result').forEach(function(el) {{
+                el.onclick = function() {{
+                    openChat(parseInt(this.dataset.ci), parseInt(this.dataset.mi));
+                }};
+            }});
+        }}
     }}
 
-    // Desktop: превращаем в двухпанельный интерфейс
-    var isDesktop = window.innerWidth > 800;
-    var desktopPanels = [];  // Для поиска на desktop
+    // Chat click
+    chatItems.forEach(function(it, i) {{
+        it.onclick = function() {{ openChat(i); }};
+    }});
 
-    if (isDesktop) {{
-        document.body.classList.add('desktop');
-
-        var list = document.getElementById('list');
-
-        // Создаём sidebar и main
-        var sidebar = document.createElement('div');
-        sidebar.className = 'sidebar';
-
-        var main = document.createElement('div');
-        main.className = 'main';
-        main.innerHTML = '<div class="main-placeholder">👈 Выберите чат</div>';
-
-        // Переносим чаты в sidebar
-        while (list.firstChild) {{
-            sidebar.appendChild(list.firstChild);
+    function openChat(ci, scrollTo) {{
+        chatItems.forEach(function(c) {{ c.classList.remove('active'); }});
+        if (chatItems[ci]) chatItems[ci].classList.add('active');
+        chatContents.forEach(function(c) {{ c.classList.remove('active'); }});
+        var content = chatContents[ci];
+        if (content) {{
+            content.classList.add('active');
+            main.querySelector('.main-placeholder').style.display = 'none';
+            if (content.parentNode !== main) main.appendChild(content);
         }}
+        if (isMobile) {{
+            sidebar.classList.add('hidden');
+            main.classList.add('active');
+        }}
+        if (scrollTo !== undefined && content) {{
+            setTimeout(function() {{
+                var msgs = content.querySelectorAll('.msg');
+                if (msgs[scrollTo]) {{
+                    msgs[scrollTo].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    msgs[scrollTo].classList.add('highlight');
+                    setTimeout(function() {{ msgs[scrollTo].classList.remove('highlight'); }}, 2500);
+                }}
+            }}, 100);
+        }} else if (content) {{
+            var m = content.querySelector('.messages');
+            if (m) m.scrollTop = m.scrollHeight;
+        }}
+    }}
 
-        list.appendChild(sidebar);
-        list.appendChild(main);
+    // Back button
+    document.addEventListener('click', function(e) {{
+        if (e.target.classList.contains('back-btn')) {{
+            chatContents.forEach(function(c) {{ c.classList.remove('active'); }});
+            main.querySelector('.main-placeholder').style.display = '';
+            sidebar.classList.remove('hidden');
+            main.classList.remove('active');
+        }}
+    }});
 
-        // Создаём контент для каждого чата (используем оригинальные chatEls!)
-        chatEls.forEach(function(chat, idx) {{
-            var body = chat.querySelector('.chat-body');
-            if (!body) return;
-
-            // Создаём панель для main
-            var panel = document.createElement('div');
-            panel.className = 'main-chat';
-            panel.dataset.idx = idx;
-            panel.innerHTML = body.innerHTML;
-            main.appendChild(panel);
-            desktopPanels[idx] = panel;
-
-            // Клик по чату
-            var header = chat.querySelector('.chat-header');
-            header.addEventListener('click', function(e) {{
-                e.preventDefault();
-
-                // Закрываем все
-                chatEls.forEach(function(c) {{ c.removeAttribute('open'); }});
-                main.querySelectorAll('.main-chat').forEach(function(p) {{ p.classList.remove('active'); }});
-                var placeholder = main.querySelector('.main-placeholder');
-                if (placeholder) placeholder.style.display = 'none';
-
-                // Открываем выбранный
-                chat.setAttribute('open', '');
-                panel.classList.add('active');
-
-                // Скролл вниз
-                var msgs = panel.querySelector('.messages');
-                if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    // Search in chat
+    document.addEventListener('click', function(e) {{
+        if (e.target.classList.contains('search-btn')) {{
+            var bar = e.target.closest('.chat-content').querySelector('.content-search');
+            bar.classList.toggle('active');
+            if (bar.classList.contains('active')) bar.querySelector('input').focus();
+        }}
+        if (e.target.classList.contains('close-btn')) {{
+            var bar = e.target.closest('.content-search');
+            bar.classList.remove('active');
+            bar.querySelector('input').value = '';
+            bar.closest('.chat-content').querySelectorAll('.msg.highlight').forEach(function(m) {{
+                m.classList.remove('highlight');
             }});
-        }});
-
-        // Открываем первый чат
-        if (chatEls.length > 0) {{
-            chatEls[0].querySelector('.chat-header').click();
         }}
+    }});
 
-        // Обновляем обработчик клика для результатов поиска на desktop
-        searchResults.addEventListener('click', function(e) {{
-            var result = e.target.closest('.search-result');
-            if (!result) return;
-
-            var chatIdx = parseInt(result.dataset.chat);
-            var msgIdx = parseInt(result.dataset.msg);
-            var chat = chatEls[chatIdx];
-            var panel = desktopPanels[chatIdx];
-
-            if (chat && panel) {{
-                // Закрываем все
-                chatEls.forEach(function(c) {{ c.removeAttribute('open'); }});
-                main.querySelectorAll('.main-chat').forEach(function(p) {{ p.classList.remove('active'); }});
-                var placeholder = main.querySelector('.main-placeholder');
-                if (placeholder) placeholder.style.display = 'none';
-
-                // Открываем выбранный
-                chat.setAttribute('open', '');
-                panel.classList.add('active');
-
-                // Скроллим к сообщению в панели
-                setTimeout(function() {{
-                    var msgs = panel.querySelectorAll('.msg');
-                    if (msgs[msgIdx]) {{
-                        msgs[msgIdx].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                        msgs[msgIdx].style.background = '#ffeb3b';
-                        setTimeout(function() {{
-                            msgs[msgIdx].style.background = '';
-                        }}, 2000);
-                    }}
-                }}, 100);
-
-                searchResults.classList.remove('active');
+    document.addEventListener('input', function(e) {{
+        if (!e.target.closest('.content-search')) return;
+        var content = e.target.closest('.chat-content');
+        var q = e.target.value.toLowerCase().trim();
+        var msgs = content.querySelectorAll('.msg');
+        var matches = [];
+        msgs.forEach(function(m) {{
+            m.classList.remove('highlight');
+            var t = m.querySelector('.text');
+            if (t && q.length >= 2 && t.textContent.toLowerCase().indexOf(q) >= 0) {{
+                m.classList.add('highlight');
+                matches.push(m);
             }}
         }});
-    }}
+        content.querySelector('.search-count').textContent = matches.length + ' найдено';
+        content._matches = matches;
+        content._idx = -1;
+    }});
+
+    document.addEventListener('click', function(e) {{
+        var content = e.target.closest('.chat-content');
+        if (!content || !content._matches || !content._matches.length) return;
+        var m = content._matches;
+        if (e.target.classList.contains('next-btn')) {{
+            content._idx = (content._idx + 1) % m.length;
+            m[content._idx].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+        }}
+        if (e.target.classList.contains('prev-btn')) {{
+            content._idx = content._idx <= 0 ? m.length - 1 : content._idx - 1;
+            m[content._idx].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+        }}
+    }});
+
+    // Open first chat on desktop
+    if (!isMobile && chatItems.length) openChat(0);
 }})();
 </script>
-
 </body>
 </html>'''
 
@@ -579,7 +737,7 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
     )
 
     if is_personal:
-        sender_name = "Вы" if is_outgoing else chat_sn
+        sender_name = ""
     else:
         sender_name = msg.get("senderNick") or msg.get("friendly") or ""
         if chat_members and sender_sn:
@@ -588,7 +746,7 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
         if not sender_name and sender_sn:
             sender_name = sender_sn
 
-    sender = escape(sender_name or "?")
+    sender = escape(sender_name or "")
     timestamp = msg.get("time", 0)
     time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M") if timestamp else ""
 
@@ -623,7 +781,7 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
         content += f'<div class="file">{icon} <a href="{url}" target="_blank">{name}</a> <small>{size}</small></div>'
 
     cls = "msg out" if is_outgoing else "msg"
-    sender_html = "" if is_outgoing or is_personal else f'<div class="sender">{sender}</div>'
+    sender_html = f'<div class="sender">{sender}</div>' if sender and not is_outgoing else ""
 
     return f'<div class="{cls}">{sender_html}{content}<div class="tm">{time_str}</div></div>'
 

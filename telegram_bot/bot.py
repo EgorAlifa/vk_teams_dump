@@ -13,7 +13,9 @@ import zipfile
 from datetime import datetime
 from typing import Optional
 
+from aiohttp import ClientTimeout
 from aiogram import Bot, Dispatcher, Router, F
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -26,7 +28,7 @@ from aiogram.types import (
     BotCommand,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
 import config
 from vkteams_client import VKTeamsClient, VKTeamsAuth, VKTeamsSession
@@ -103,6 +105,40 @@ async def safe_delete_message(bot: Bot, chat_id: int, message_id: int):
         await bot.delete_message(chat_id, message_id)
     except:
         pass
+
+
+async def send_document_with_retry(
+    bot: Bot,
+    chat_id: int,
+    file_path: str,
+    caption: str,
+    max_retries: int = 4
+) -> bool:
+    """Отправить документ с retry логикой и exponential backoff"""
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            await bot.send_document(
+                chat_id,
+                FSInputFile(file_path),
+                caption=caption,
+                read_timeout=300,  # 5 минут на чтение
+                write_timeout=300,  # 5 минут на запись
+            )
+            return True
+        except (asyncio.TimeoutError, TelegramNetworkError) as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = 2 ** (attempt + 1)  # 2, 4, 8, 16 seconds
+                print(f"📤 Retry {attempt + 1}/{max_retries} after {wait_time}s: {e}")
+                await asyncio.sleep(wait_time)
+        except Exception as e:
+            # Non-retryable error
+            raise
+
+    # All retries failed
+    raise last_error or Exception("Failed to send document after retries")
 
 
 async def cleanup_user_messages(bot: Bot, user_id: int, chat_id: int, msg_type: str = None):
@@ -1103,18 +1139,23 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 )
             else:
                 try:
-                    # Увеличенный timeout для больших файлов
-                    await asyncio.wait_for(
-                        callback.message.answer_document(
-                            FSInputFile(zip_path),
-                            caption=f"📦 VK Teams Export ({format_type.upper()})\n"
-                                    f"📊 {len(all_exports)} чатов, {sum(e.get('total_messages', 0) for e in all_exports)} сообщений"
-                        ),
-                        timeout=300  # 5 минут на загрузку
+                    # Отправка с retry логикой и exponential backoff
+                    caption = (
+                        f"📦 VK Teams Export ({format_type.upper()})\n"
+                        f"📊 {len(all_exports)} чатов, {sum(e.get('total_messages', 0) for e in all_exports)} сообщений"
                     )
-                except asyncio.TimeoutError:
+                    await send_document_with_retry(
+                        callback.bot,
+                        callback.message.chat.id,
+                        zip_path,
+                        caption,
+                        max_retries=4
+                    )
+                except (asyncio.TimeoutError, TelegramNetworkError) as e:
                     await callback.message.answer(
-                        f"⚠️ Таймаут при отправке файла.\n\n"
+                        f"⚠️ Не удалось отправить файл после 4 попыток.\n"
+                        f"Ошибка: {e}\n\n"
+                        f"Попробуйте экспортировать меньше чатов или повторите позже.\n"
                         f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
                         parse_mode="HTML"
                     )
@@ -1214,7 +1255,15 @@ async def main():
         print("   Получить токен: @BotFather в Telegram")
         return
 
-    bot = Bot(token=config.TG_BOT_TOKEN)
+    # Настраиваем HTTP сессию с увеличенными таймаутами для больших файлов
+    http_timeout = ClientTimeout(
+        total=600,      # 10 минут общий таймаут
+        connect=30,     # 30 сек на подключение
+        sock_read=300,  # 5 минут на чтение
+        sock_connect=30,
+    )
+    session = AiohttpSession(timeout=http_timeout)
+    bot = Bot(token=config.TG_BOT_TOKEN, session=session)
     _bot = bot
     dp = Dispatcher()
     dp.include_router(router)
