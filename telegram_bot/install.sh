@@ -348,14 +348,14 @@ MACHINE_CPU=${MACHINE_CPU:-$AUTO_CPU}
 read -p "RAM в GB на машине [$AUTO_RAM]: " MACHINE_RAM
 MACHINE_RAM=${MACHINE_RAM:-$AUTO_RAM}
 
-# Рассчитываем лимиты для контейнера (75% от машины, но не меньше минимума)
-# CPU: 75% от ядер, минимум 0.5
-BOT_CPU=$(echo "$MACHINE_CPU * 0.75" | bc -l 2>/dev/null || echo "1.5")
+# Рассчитываем лимиты для контейнера (90% от машины)
+# CPU: 90% от ядер
+BOT_CPU=$(echo "$MACHINE_CPU * 0.9" | bc -l 2>/dev/null || echo "1.8")
 BOT_CPU=$(printf "%.1f" $BOT_CPU)
 
-# RAM: 60% от машины, минимум 1GB, в мегабайтах
-BOT_RAM_GB=$(echo "$MACHINE_RAM * 0.6" | bc -l 2>/dev/null || echo "2")
-BOT_RAM_MB=$(printf "%.0f" $(echo "$BOT_RAM_GB * 1024" | bc -l 2>/dev/null || echo "2048"))
+# RAM: 90% от машины, в мегабайтах
+BOT_RAM_GB=$(echo "$MACHINE_RAM * 0.9" | bc -l 2>/dev/null || echo "3.6")
+BOT_RAM_MB=$(printf "%.0f" $(echo "$BOT_RAM_GB * 1024" | bc -l 2>/dev/null || echo "3686"))
 
 # Минимальные значения
 if [ "$BOT_RAM_MB" -lt 1024 ]; then BOT_RAM_MB=1024; fi
