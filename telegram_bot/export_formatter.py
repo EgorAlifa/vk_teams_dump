@@ -136,7 +136,7 @@ def format_as_html(data: dict) -> str:
         </button>
     </div>
     <div class="panel-search">
-        <input type="text" placeholder="Поиск в чате..." oninput="searchInChat(this)">
+        <input type="text" placeholder="Поиск в чате..." oninput="searchInChat(this)" onkeydown="searchInChat(this,event)">
         <span class="search-info"></span>
         <button onclick="navSearch(this,-1)">↑</button>
         <button onclick="navSearch(this,1)">↓</button>
@@ -539,17 +539,22 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,A
             document.getElementById('sidebar').classList.add('hidden');
             document.getElementById('main').classList.add('active');
         }}
+        // Увеличенный таймаут для отрисовки
         setTimeout(function(){{
             var panel=document.getElementById('p'+ci);
-            if(panel){{
-                var msgs=panel.querySelectorAll('.msg');
-                if(msgs[mi]){{
-                    msgs[mi].scrollIntoView({{behavior:'smooth',block:'center'}});
-                    msgs[mi].classList.add('hl');
-                    setTimeout(function(){{msgs[mi].classList.remove('hl')}},2500);
+            if(!panel)return;
+            var msgs=panel.querySelectorAll('.msg');
+            var target=msgs[mi];
+            if(target){{
+                // Скроллим контейнер сообщений
+                var container=panel.querySelector('.messages');
+                if(container){{
+                    target.scrollIntoView({{behavior:'smooth',block:'center'}});
                 }}
+                target.classList.add('hl');
+                setTimeout(function(){{target.classList.remove('hl')}},3000);
             }}
-        }},100);
+        }},200);
     }};
 
     // Mobile back
@@ -577,9 +582,19 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,A
         panel._matches=null;
     }};
 
-    window.searchInChat=function(input){{
+    window.searchInChat=function(input,e){{
         var panel=input.closest('.chat-panel');
         var q=input.value.toLowerCase().trim();
+
+        // Enter - переход к следующему
+        if(e&&e.key==='Enter'){{
+            e.preventDefault();
+            if(panel._matches&&panel._matches.length){{
+                navInPanel(panel,e.shiftKey?-1:1);
+            }}
+            return;
+        }}
+
         var msgs=panel.querySelectorAll('.msg');
         var matches=[];
         msgs.forEach(function(m){{
@@ -590,18 +605,30 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,A
                 matches.push(m);
             }}
         }});
-        panel.querySelector('.search-info').textContent=matches.length?matches.length+' найдено':'';
+        var info=panel.querySelector('.search-info');
+        info.textContent=matches.length?matches.length+' найдено':'';
         panel._matches=matches;
         panel._idx=-1;
+        // Автоскролл к первому результату
+        if(matches.length){{
+            panel._idx=0;
+            matches[0].scrollIntoView({{behavior:'smooth',block:'center'}});
+            info.textContent='1/'+matches.length;
+        }}
     }};
 
-    window.navSearch=function(btn,dir){{
-        var panel=btn.closest('.chat-panel');
+    function navInPanel(panel,dir){{
         var m=panel._matches;
         if(!m||!m.length)return;
         if(dir>0)panel._idx=(panel._idx+1)%m.length;
         else panel._idx=panel._idx<=0?m.length-1:panel._idx-1;
         m[panel._idx].scrollIntoView({{behavior:'smooth',block:'center'}});
+        panel.querySelector('.search-info').textContent=(panel._idx+1)+'/'+m.length;
+    }}
+
+    window.navSearch=function(btn,dir){{
+        var panel=btn.closest('.chat-panel');
+        navInPanel(panel,dir);
     }};
 
     // Back button for mobile
