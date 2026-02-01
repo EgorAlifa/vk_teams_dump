@@ -5,6 +5,7 @@ VK Teams Export Bot для Telegram
 """
 
 import asyncio
+import gc
 import json
 import os
 import tempfile
@@ -1070,6 +1071,9 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         critical_error = str(e)
 
+    # Считаем общее количество сообщений
+    total_msgs = sum(e.get('total_messages', 0) for e in all_exports)
+
     # Формируем итоговый экспорт (даже при ошибках — отдаём что собрали)
     final_export = {
         "export_date": datetime.now().isoformat(),
@@ -1095,14 +1099,33 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
             if format_type in ("html", "both"):
                 html_filename = f"vkteams_export_{timestamp}.html"
                 html_path = os.path.join(tmpdir, html_filename)
+
+                # Статус: генерация HTML
+                await safe_edit_text(
+                    status_msg,
+                    f"⏳ <b>Генерация HTML...</b>\n\n"
+                    f"📊 Чатов: {len(all_exports)}\n"
+                    f"📝 Сообщений: {total_msgs}\n\n"
+                    f"Это может занять время для больших экспортов",
+                    parse_mode="HTML"
+                )
+
                 try:
+                    print(f"📝 Generating HTML for {len(all_exports)} chats, {total_msgs} messages...")
                     html_content = format_as_html(final_export)
+                    print(f"✅ HTML generated: {len(html_content)} bytes")
                 except Exception as html_err:
+                    print(f"❌ HTML generation error: {html_err}")
                     errors.append(f"HTML форматирование: {html_err}")
                     html_content = f"<html><body><h1>Ошибка форматирования</h1><pre>{html_err}</pre></body></html>"
+
                 with open(html_path, "w", encoding="utf-8") as f:
                     f.write(html_content)
                 files_for_zip.append((html_path, html_filename))
+
+                # Освобождаем память
+                del html_content
+                gc.collect()
 
             # Создаём ZIP архив с максимальным сжатием
             zip_filename = f"vkteams_export_{timestamp}.zip"
@@ -1171,8 +1194,6 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         error_text += f"\n\n⚠️ Ошибки ({len(errors)}):\n" + "\n".join(errors[:5])
         if len(errors) > 5:
             error_text += f"\n... и ещё {len(errors) - 5}"
-
-    total_msgs = sum(e.get('total_messages', 0) for e in all_exports)
 
     support_text = ""
     if critical_error or errors:
