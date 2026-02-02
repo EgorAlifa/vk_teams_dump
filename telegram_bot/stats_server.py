@@ -26,35 +26,51 @@ def metrics_collector():
 
 class StatsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/api/stats":
-            self.send_json(get_stats())
-        elif self.path == "/api/metrics/history":
-            self.send_json(get_metrics_history(24))
-        elif self.path == "/" or self.path == "/stats":
-            self.send_html()
-        elif self.path == "/health":
-            self.send_json({"status": "ok"})
-        else:
-            self.send_error(404)
+        try:
+            print(f"Request: {self.path}")
+            if self.path == "/api/stats":
+                self.send_json(get_stats())
+            elif self.path == "/api/metrics/history":
+                self.send_json(get_metrics_history(24))
+            elif self.path == "/" or self.path == "/stats":
+                self.send_html()
+            elif self.path == "/health":
+                self.send_json({"status": "ok"})
+            else:
+                self.send_error(404)
+        except Exception as e:
+            print(f"ERROR handling request {self.path}: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_error(500)
 
     def send_json(self, data):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-        self.end_headers()
-        self.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode())
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            self.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode())
+        except Exception as e:
+            print(f"ERROR sending JSON: {e}")
+            raise
 
     def send_html(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-        self.end_headers()
-        self.wfile.write(DASHBOARD_HTML.encode())
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            self.wfile.write(DASHBOARD_HTML.encode())
+        except Exception as e:
+            print(f"ERROR sending HTML: {e}")
+            raise
 
     def log_message(self, format, *args):
-        pass  # Suppress logging
+        # Log important messages
+        print(f"HTTP: {format % args}")
 
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -754,14 +770,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 if __name__ == "__main__":
-    # Запускаем сборщик метрик в фоне
-    collector_thread = threading.Thread(target=metrics_collector, daemon=True)
-    collector_thread.start()
-    print(f"Metrics collector started (interval: {METRICS_INTERVAL}s)")
+    try:
+        # Запускаем сборщик метрик в фоне
+        collector_thread = threading.Thread(target=metrics_collector, daemon=True)
+        collector_thread.start()
+        print(f"Metrics collector started (interval: {METRICS_INTERVAL}s)")
 
-    # Сохраняем первую точку сразу
-    save_metrics()
+        # Сохраняем первую точку сразу
+        try:
+            save_metrics()
+            print("Initial metrics saved")
+        except Exception as e:
+            print(f"Failed to save initial metrics: {e}")
 
-    print(f"Stats server running on http://0.0.0.0:{PORT}")
-    server = HTTPServer(("0.0.0.0", PORT), StatsHandler)
-    server.serve_forever()
+        # Создаём и запускаем сервер
+        print(f"Creating HTTP server on port {PORT}...")
+        server = HTTPServer(("0.0.0.0", PORT), StatsHandler)
+        print(f"Stats server running on http://0.0.0.0:{PORT}")
+        print("Waiting for connections...")
+        server.serve_forever()
+    except Exception as e:
+        print(f"FATAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        import sys
+        sys.exit(1)
