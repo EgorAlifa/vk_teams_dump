@@ -1108,6 +1108,16 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 html_filename = f"vkteams_export_{timestamp}.html"
                 html_path = os.path.join(tmpdir, html_filename)
 
+                # Создаём словарь имён из контактов
+                names = {}
+                for contact in all_chats:
+                    sn = contact.get("sn", "")
+                    name = contact.get("name") or contact.get("friendly") or ""
+                    # Используем имя только если это не email/sn
+                    if sn and name and name != sn and "@" not in name:
+                        names[sn] = name
+                print(f"📛 Built names dictionary: {len(names)} entries")
+
                 # Скачиваем аватарки
                 avatars = {}
                 try:
@@ -1131,14 +1141,15 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     f"⏳ <b>Генерация HTML...</b>\n\n"
                     f"📊 Чатов: {len(all_exports)}\n"
                     f"📝 Сообщений: {total_msgs}\n"
-                    f"📷 Аватарок: {len(avatars)}\n\n"
+                    f"📷 Аватарок: {len(avatars)}\n"
+                    f"📛 Имён: {len(names)}\n\n"
                     f"Это может занять время для больших экспортов",
                     parse_mode="HTML"
                 )
 
                 try:
                     print(f"📝 Generating HTML for {len(all_exports)} chats, {total_msgs} messages...")
-                    html_content = format_as_html(final_export, avatars=avatars)
+                    html_content = format_as_html(final_export, avatars=avatars, names=names)
                     print(f"✅ HTML generated: {len(html_content)} bytes")
                 except Exception as html_err:
                     print(f"❌ HTML generation error: {html_err}")

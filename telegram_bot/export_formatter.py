@@ -14,16 +14,19 @@ def format_as_json(data: dict) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def format_as_html(data: dict, avatars: dict = None) -> str:
+def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile: bool = False) -> str:
     """
     Форматирование в HTML - современный дизайн 2025
-    Тёмная/светлая тема, CSS-переключение чатов, аватарки
+    Светлая/тёмная тема, CSS-переключение чатов, аватарки
 
     Args:
         data: Данные экспорта
         avatars: Словарь {sn: bytes} с аватарками (опционально)
+        names: Словарь {sn: display_name} для отображения имён (опционально)
+        mobile: Если True, генерировать мобильную версию
     """
     avatars = avatars or {}
+    names = names or {}
 
     # Фильтруем чаты без сообщений
     chats = [c for c in data.get("chats", []) if c.get("messages")]
@@ -42,15 +45,22 @@ def format_as_html(data: dict, avatars: dict = None) -> str:
         msg_count = len(messages)
 
         # Определяем отображаемое имя чата
-        if is_personal and chat_sn and "@" in chat_sn:
+        # 1. Сначала проверяем словарь имён
+        if chat_sn in names and names[chat_sn]:
+            friendly_name = names[chat_sn]
+            if is_personal and "@" in chat_sn:
+                chat_name = escape(f"{friendly_name} ({chat_sn})")
+            else:
+                chat_name = escape(friendly_name)
+        elif is_personal and chat_sn and "@" in chat_sn:
             # Личный чат - ищем имя собеседника
             friendly_name = None
 
-            # 1. Проверяем chat_name - API мог уже дать имя
+            # 2. Проверяем chat_name - API мог уже дать имя
             if raw_chat_name and raw_chat_name != chat_sn and "@" not in raw_chat_name:
                 friendly_name = raw_chat_name
 
-            # 2. Ищем в сообщениях от этого человека
+            # 3. Ищем в сообщениях от этого человека
             if not friendly_name:
                 for msg in messages:
                     sender_sn = msg.get("chat", {}).get("sender") or msg.get("senderSn") or ""
@@ -60,7 +70,7 @@ def format_as_html(data: dict, avatars: dict = None) -> str:
                             friendly_name = fn.strip()
                             break
 
-            # 3. Ищем в любых сообщениях где упоминается этот sn
+            # 4. Ищем в любых сообщениях где упоминается этот sn
             if not friendly_name:
                 for msg in messages:
                     # Может быть в outgoing сообщениях как получатель
@@ -531,20 +541,25 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
 
 /* Mobile */
 @media(max-width:768px){{
-    .app{{flex-direction:column}}
-    .sidebar{{width:100%;min-width:100%;height:100%}}
+    .app{{flex-direction:column;height:100vh}}
+    .sidebar{{width:100%;min-width:100%;height:100%;position:absolute;top:0;left:0;z-index:10;background:var(--bg2)}}
     .sidebar.hidden{{display:none}}
-    .main{{display:none;width:100%;height:100%}}
+    .main{{position:absolute;top:0;left:0;width:100%;height:100%;display:none;z-index:20;background:var(--bg)}}
     .main.active{{display:flex}}
-    .back-btn{{display:block}}
+    .chat-panel{{display:none!important}}
+    .chat-panel.mobile-active{{display:flex!important}}
+    .back-btn{{display:flex}}
     .msg{{max-width:85%}}
     .messages{{padding:10px}}
+    .panel-header{{position:sticky;top:0;z-index:5}}
+    .search-box input{{font-size:16px}}
+    .theme-toggle{{bottom:80px;right:16px;width:44px;height:44px}}
 }}
 </style>
 </head>
-<body>
+<body class="light">
 
-<button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему">🌙</button>
+<button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему">☀️</button>
 
 <div class="app">
     {sidebar_items}
@@ -573,18 +588,20 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
 </div>
 
 <script>
-// Theme toggle
+// Theme toggle (light is default)
 function toggleTheme(){{
     var body=document.body;
     var btn=document.querySelector('.theme-toggle');
     body.classList.toggle('light');
-    btn.textContent=body.classList.contains('light')?'🌙':'☀️';
-    localStorage.setItem('theme',body.classList.contains('light')?'light':'dark');
+    var isLight=body.classList.contains('light');
+    btn.textContent=isLight?'☀️':'🌙';
+    localStorage.setItem('theme',isLight?'light':'dark');
 }}
-// Restore saved theme
+// Restore saved theme (light is default)
 (function(){{
-    if(localStorage.getItem('theme')==='light'){{
-        document.body.classList.add('light');
+    var saved=localStorage.getItem('theme');
+    if(saved==='dark'){{
+        document.body.classList.remove('light');
         document.querySelector('.theme-toggle').textContent='🌙';
     }}
 }})();
@@ -597,6 +614,17 @@ function toggleTheme(){{
     var tabs=document.querySelectorAll('.tab');
     var currentTab='chats';
     var isMobile=window.innerWidth<=768;
+
+    // Mobile: open chat panel
+    function openChatMobile(idx){{
+        if(!isMobile)return;
+        // Hide all panels, show selected one
+        document.querySelectorAll('.chat-panel').forEach(function(p){{p.classList.remove('mobile-active')}});
+        var panel=document.getElementById('p'+idx);
+        if(panel)panel.classList.add('mobile-active');
+        document.getElementById('sidebar').classList.add('hidden');
+        document.getElementById('main').classList.add('active');
+    }}
 
     // Move chat items to chat-list
     chatItems.forEach(function(item){{chatList.appendChild(item)}});
@@ -672,8 +700,7 @@ function toggleTheme(){{
         var radio=document.getElementById('c'+ci);
         if(radio)radio.checked=true;
         if(isMobile){{
-            document.getElementById('sidebar').classList.add('hidden');
-            document.getElementById('main').classList.add('active');
+            openChatMobile(ci);
         }}
         // Увеличенный таймаут для отрисовки
         setTimeout(function(){{
@@ -693,13 +720,10 @@ function toggleTheme(){{
         }},200);
     }};
 
-    // Mobile back
     chatItems.forEach(function(item){{
         item.addEventListener('click',function(){{
-            if(isMobile){{
-                document.getElementById('sidebar').classList.add('hidden');
-                document.getElementById('main').classList.add('active');
-            }}
+            var idx=item.getAttribute('data-idx');
+            openChatMobile(idx);
         }});
     }});
 
@@ -771,9 +795,21 @@ function toggleTheme(){{
     document.querySelectorAll('.back-btn').forEach(function(btn){{
         btn.addEventListener('click',function(e){{
             e.preventDefault();
+            // Hide all mobile-active panels
+            document.querySelectorAll('.chat-panel').forEach(function(p){{p.classList.remove('mobile-active')}});
             document.getElementById('sidebar').classList.remove('hidden');
             document.getElementById('main').classList.remove('active');
         }});
+    }});
+
+    // Handle resize
+    window.addEventListener('resize',function(){{
+        isMobile=window.innerWidth<=768;
+        if(!isMobile){{
+            document.getElementById('sidebar').classList.remove('hidden');
+            document.getElementById('main').classList.remove('active');
+            document.querySelectorAll('.chat-panel').forEach(function(p){{p.classList.remove('mobile-active')}});
+        }}
     }});
 }})();
 </script>
