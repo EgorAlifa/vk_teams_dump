@@ -1,9 +1,10 @@
 """
 Форматирование экспорта VK Teams в различные форматы
-Стиль VK Teams - мягкий голубой/белый
+Современный дизайн 2025 - тёмная/светлая тема с тёплыми акцентами
 """
 
 import json
+import base64
 from datetime import datetime
 from html import escape
 
@@ -13,11 +14,16 @@ def format_as_json(data: dict) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def format_as_html(data: dict) -> str:
+def format_as_html(data: dict, avatars: dict = None) -> str:
     """
-    Форматирование в HTML - стиль VK Teams
-    Мягкий голубой дизайн, CSS-переключение чатов, JS только для поиска
+    Форматирование в HTML - современный дизайн 2025
+    Тёмная/светлая тема, CSS-переключение чатов, аватарки
+
+    Args:
+        data: Данные экспорта
+        avatars: Словарь {sn: bytes} с аватарками (опционально)
     """
+    avatars = avatars or {}
 
     # Фильтруем чаты без сообщений
     chats = [c for c in data.get("chats", []) if c.get("messages")]
@@ -94,6 +100,14 @@ def format_as_html(data: dict) -> str:
 
         avatar_letter = chat_name[0].upper() if chat_name else "?"
 
+        # Avatar: base64 image or letter
+        avatar_html = ""
+        if chat_sn in avatars:
+            avatar_b64 = base64.b64encode(avatars[chat_sn]).decode('ascii')
+            avatar_html = f'<img src="data:image/jpeg;base64,{avatar_b64}" alt="">'
+        else:
+            avatar_html = avatar_letter
+
         # Собираем участников
         chat_members = {}
         for msg in messages:
@@ -145,7 +159,7 @@ def format_as_html(data: dict) -> str:
         sidebar_items += f'''
 <input type="radio" name="chat" id="c{idx}" class="chat-radio" {checked}>
 <label for="c{idx}" class="chat-item" data-idx="{idx}">
-    <div class="avatar">{avatar_letter}</div>
+    <div class="avatar">{avatar_html}</div>
     <div class="chat-info">
         <div class="chat-name">{chat_name[:30]}{"…" if len(chat_name) > 30 else ""}</div>
         <div class="chat-preview">{preview}</div>
@@ -161,7 +175,7 @@ def format_as_html(data: dict) -> str:
 <div class="chat-panel" id="p{idx}">
     <div class="panel-header">
         <label for="closeChat" class="back-btn">‹</label>
-        <div class="avatar sm">{avatar_letter}</div>
+        <div class="avatar sm">{avatar_html}</div>
         <div class="header-info">
             <div class="header-name">{chat_name}</div>
             <div class="header-sub">{msg_count} сообщений</div>
@@ -192,103 +206,151 @@ def format_as_html(data: dict) -> str:
 <title>VK Teams Export</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
+/* Dark theme (default) */
 :root{{
-    --bg:#f0f2f5;
+    --bg:#0f0f12;
+    --bg2:#16161b;
+    --card:#1c1c24;
+    --card2:#242430;
+    --accent:#10b981;
+    --accent2:#34d399;
+    --accent-bg:rgba(16,185,129,0.1);
+    --purple:#8b5cf6;
+    --orange:#f59e0b;
+    --pink:#ec4899;
+    --blue:#3b82f6;
+    --text:#f4f4f5;
+    --text2:#a1a1aa;
+    --text3:#71717a;
+    --border:#27272a;
+    --border2:#3f3f46;
+    --hover:#27272e;
+    --msg-out:#1e3a2f;
+    --msg-in:#27272e;
+    --hl:rgba(16,185,129,0.25);
+    --shadow:0 2px 8px rgba(0,0,0,0.3);
+    --shadow-lg:0 8px 32px rgba(0,0,0,0.4);
+    --radius:12px;
+    --radius-lg:16px;
+}}
+/* Light theme */
+.light{{
+    --bg:#f5f5f7;
+    --bg2:#ffffff;
     --card:#ffffff;
-    --primary:#4a76a8;
-    --primary-light:#e7f0f8;
-    --primary-dark:#3d6490;
+    --card2:#f0f0f2;
+    --accent:#059669;
+    --accent2:#10b981;
+    --accent-bg:rgba(5,150,105,0.1);
     --text:#1a1a1a;
-    --text2:#65676b;
-    --text3:#8e9297;
-    --border:#e4e6eb;
-    --hover:#f5f6f8;
-    --msg-out:#d4e8fc;
+    --text2:#52525b;
+    --text3:#71717a;
+    --border:#e4e4e7;
+    --border2:#d4d4d8;
+    --hover:#f4f4f5;
+    --msg-out:#d1fae5;
     --msg-in:#ffffff;
-    --hl:#fff9c4;
-    --shadow:0 1px 2px rgba(0,0,0,0.05);
-    --shadow-lg:0 4px 12px rgba(0,0,0,0.08);
-    --radius:10px;
+    --hl:rgba(5,150,105,0.15);
+    --shadow:0 1px 3px rgba(0,0,0,0.08);
+    --shadow-lg:0 4px 12px rgba(0,0,0,0.1);
 }}
 html,body{{height:100%;overflow:hidden}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.4;-webkit-font-smoothing:antialiased}}
+body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;transition:background 0.3s,color 0.3s}}
 
-.app{{display:flex;height:100%;max-width:1400px;margin:0 auto;background:var(--card);box-shadow:var(--shadow-lg);border-radius:var(--radius);overflow:hidden}}
+/* Theme toggle */
+.theme-toggle{{
+    position:fixed;bottom:20px;right:20px;z-index:1000;
+    width:48px;height:48px;border-radius:50%;
+    background:var(--card);border:1px solid var(--border);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+    box-shadow:var(--shadow-lg);transition:all 0.2s;font-size:20px
+}}
+.theme-toggle:hover{{transform:scale(1.1);border-color:var(--accent)}}
+
+.app{{display:flex;height:100%;max-width:1400px;margin:0 auto;background:var(--card);box-shadow:var(--shadow-lg);border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border)}}
 
 /* Sidebar */
-.sidebar{{width:360px;min-width:360px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--card)}}
-.sidebar-header{{padding:16px 20px;background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff}}
-.sidebar-header h1{{font-size:16px;font-weight:600;margin-bottom:4px;letter-spacing:-0.3px}}
-.sidebar-header small{{font-size:12px;opacity:.9}}
+.sidebar{{width:380px;min-width:380px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg2)}}
+.sidebar-header{{padding:20px 24px;background:linear-gradient(135deg,var(--card) 0%,var(--card2) 100%);border-bottom:1px solid var(--border)}}
+.sidebar-header h1{{font-size:18px;font-weight:700;margin-bottom:6px;letter-spacing:-0.5px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
+.sidebar-header small{{font-size:12px;color:var(--text2)}}
 
-.search-box{{padding:12px 16px;border-bottom:1px solid var(--border);background:var(--card)}}
+.search-box{{padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg2)}}
 .search-box input{{
-    width:100%;padding:10px 14px 10px 38px;
+    width:100%;padding:12px 16px 12px 44px;
     border:1px solid var(--border);border-radius:var(--radius);
-    font-size:14px;background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2365676b' stroke-width='2'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='M11 11l4 4'/%3E%3C/svg%3E") 12px center no-repeat;
-    outline:none;transition:all 0.2s
+    font-size:14px;background:var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M13 13l4 4'/%3E%3C/svg%3E") 14px center no-repeat;
+    outline:none;transition:all 0.2s;color:var(--text)
 }}
-.search-box input:focus{{border-color:var(--primary);background-color:var(--card);box-shadow:0 0 0 3px var(--primary-light)}}
+.search-box input::placeholder{{color:var(--text3)}}
+.search-box input:focus{{border-color:var(--accent);background-color:var(--card2);box-shadow:0 0 0 3px var(--accent-bg)}}
 
-.tabs{{display:flex;border-bottom:1px solid var(--border);background:var(--card)}}
-.tab{{flex:1;padding:12px;font-size:13px;font-weight:500;text-align:center;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s}}
-.tab:hover{{color:var(--primary);background:var(--hover)}}
-.tab.active{{color:var(--primary);border-color:var(--primary);background:var(--primary-light)}}
+.tabs{{display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg2)}}
+.tab{{flex:1;padding:10px 12px;font-size:13px;font-weight:600;text-align:center;color:var(--text2);cursor:pointer;border-radius:8px;transition:all 0.2s}}
+.tab:hover{{color:var(--text);background:var(--hover)}}
+.tab.active{{color:var(--accent);background:var(--accent-bg)}}
 
-.sidebar-stats{{padding:10px 20px;font-size:12px;color:var(--text2);background:var(--bg);font-weight:500}}
+.sidebar-stats{{padding:12px 24px;font-size:12px;color:var(--text3);background:var(--card);font-weight:500;border-bottom:1px solid var(--border)}}
 
-.chat-list{{flex:1;overflow-y:auto}}
+.chat-list{{flex:1;overflow-y:auto;background:var(--bg2)}}
 .chat-list::-webkit-scrollbar{{width:6px}}
 .chat-list::-webkit-scrollbar-track{{background:transparent}}
-.chat-list::-webkit-scrollbar-thumb{{background:var(--border);border-radius:3px}}
+.chat-list::-webkit-scrollbar-thumb{{background:var(--border2);border-radius:3px}}
+.chat-list::-webkit-scrollbar-thumb:hover{{background:var(--text3)}}
 .chat-radio{{display:none}}
 
 .chat-item{{
-    display:flex;align-items:center;gap:12px;
-    padding:12px 16px;cursor:pointer;
+    display:flex;align-items:center;gap:14px;
+    padding:14px 20px;cursor:pointer;
     border-bottom:1px solid var(--border);
-    transition:background 0.15s
+    transition:all 0.15s
 }}
 .chat-item:hover{{background:var(--hover)}}
-.chat-radio:checked+.chat-item{{background:var(--primary-light);border-left:3px solid var(--primary);padding-left:13px}}
+.chat-radio:checked+.chat-item{{background:var(--accent-bg);border-left:3px solid var(--accent);padding-left:17px}}
 
 .avatar{{
-    width:48px;height:48px;border-radius:50%;
-    background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;
+    width:48px;height:48px;border-radius:14px;
+    background:linear-gradient(135deg,var(--purple),var(--pink));color:#fff;
     display:flex;align-items:center;justify-content:center;
-    font-size:18px;font-weight:600;flex-shrink:0;
-    box-shadow:var(--shadow)
+    font-size:18px;font-weight:700;flex-shrink:0;
+    box-shadow:var(--shadow);overflow:hidden
 }}
-.avatar.sm{{width:36px;height:36px;font-size:14px}}
+.avatar img{{width:100%;height:100%;object-fit:cover}}
+.avatar.sm{{width:36px;height:36px;font-size:14px;border-radius:10px}}
+/* Avatar color variants */
+.chat-item:nth-child(3n+1) .avatar{{background:linear-gradient(135deg,var(--accent),#059669)}}
+.chat-item:nth-child(3n+2) .avatar{{background:linear-gradient(135deg,var(--blue),var(--purple))}}
+.chat-item:nth-child(3n) .avatar{{background:linear-gradient(135deg,var(--orange),var(--pink))}}
 
 .chat-info{{flex:1;min-width:0}}
 .chat-name{{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}}
-.chat-preview{{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}}
-.preview-sender{{color:var(--primary);font-weight:500}}
+.chat-preview{{font-size:13px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}}
+.preview-sender{{color:var(--accent);font-weight:500}}
 
 .chat-meta{{text-align:right;flex-shrink:0}}
 .chat-time{{display:block;font-size:11px;color:var(--text3);font-weight:500}}
 .chat-badge{{
-    display:inline-flex;align-items:center;justify-content:center;margin-top:6px;
-    min-width:22px;height:22px;
-    background:var(--primary);color:#fff;
-    font-size:11px;font-weight:600;padding:0 6px;border-radius:11px
+    display:inline-flex;align-items:center;justify-content:center;margin-top:8px;
+    min-width:24px;height:24px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;
+    font-size:11px;font-weight:700;padding:0 8px;border-radius:12px
 }}
 
 /* Search Results */
-.search-results{{flex:1;overflow-y:auto;display:none}}
+.search-results{{flex:1;overflow-y:auto;display:none;background:var(--bg2)}}
 .search-results.active{{display:block}}
-.search-result{{display:flex;gap:12px;padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.15s}}
+.search-result{{display:flex;gap:14px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);transition:all 0.15s}}
 .search-result:hover{{background:var(--hover)}}
 .result-info{{flex:1;min-width:0}}
 .result-chat{{font-size:14px;font-weight:600;color:var(--text)}}
-.result-sender{{font-size:12px;color:var(--primary);font-weight:500;margin-top:2px}}
-.result-text{{font-size:13px;color:var(--text2);margin-top:4px;line-height:1.4}}
-.result-text mark{{background:var(--primary-light);color:var(--primary-dark);padding:1px 3px;border-radius:3px;font-weight:500}}
+.result-sender{{font-size:12px;color:var(--accent);font-weight:500;margin-top:3px}}
+.result-text{{font-size:13px;color:var(--text2);margin-top:6px;line-height:1.5}}
+.result-text mark{{background:var(--accent-bg);color:var(--accent2);padding:2px 4px;border-radius:4px;font-weight:600}}
 
 /* Main content */
 .main{{flex:1;display:flex;flex-direction:column;background:var(--bg);position:relative}}
-.placeholder{{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:14px}}
+.placeholder{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);font-size:15px;gap:12px}}
+.placeholder::before{{content:'💬';font-size:48px;opacity:0.5}}
 
 .chat-panel{{
     position:absolute;top:0;left:0;right:0;bottom:0;
@@ -381,89 +443,90 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica 
 #c395:checked~.main #p395,#c396:checked~.main #p396,#c397:checked~.main #p397,#c398:checked~.main #p398,#c399:checked~.main #p399{{display:flex}}
 
 .panel-header{{
-    display:flex;align-items:center;gap:12px;
-    padding:14px 18px;background:var(--card);
+    display:flex;align-items:center;gap:14px;
+    padding:16px 20px;background:var(--card);
     border-bottom:1px solid var(--border);
     box-shadow:var(--shadow)
 }}
 .back-btn{{
-    display:none;width:36px;height:36px;
+    display:none;width:40px;height:40px;
     border:none;background:var(--hover);border-radius:var(--radius);
-    font-size:18px;cursor:pointer;text-align:center;line-height:36px;
+    font-size:20px;cursor:pointer;text-align:center;line-height:40px;
     text-decoration:none;color:var(--text);transition:all 0.2s
 }}
-.back-btn:hover{{background:var(--primary-light);color:var(--primary)}}
+.back-btn:hover{{background:var(--accent-bg);color:var(--accent)}}
 .header-info{{flex:1;min-width:0}}
-.header-name{{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-0.3px}}
-.header-sub{{font-size:12px;color:var(--text2);margin-top:2px}}
+.header-name{{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-0.3px}}
+.header-sub{{font-size:12px;color:var(--text3);margin-top:3px}}
 
 .search-toggle{{
-    width:40px;height:40px;border:none;
+    width:44px;height:44px;border:none;
     background:var(--hover);cursor:pointer;
     border-radius:var(--radius);color:var(--text2);
     display:flex;align-items:center;justify-content:center;
     transition:all 0.2s
 }}
-.search-toggle:hover{{background:var(--primary-light);color:var(--primary)}}
+.search-toggle:hover{{background:var(--accent-bg);color:var(--accent)}}
 
 .panel-search{{
-    display:none;align-items:center;gap:8px;
-    padding:10px 18px;background:var(--card);
+    display:none;align-items:center;gap:10px;
+    padding:12px 20px;background:var(--card2);
     border-bottom:1px solid var(--border)
 }}
 .panel-search.active{{display:flex}}
 .panel-search input{{
-    flex:1;padding:9px 12px;border:1px solid var(--border);
-    border-radius:var(--radius);font-size:14px;outline:none;transition:all 0.2s
+    flex:1;padding:10px 14px;border:1px solid var(--border);
+    border-radius:var(--radius);font-size:14px;outline:none;transition:all 0.2s;
+    background:var(--card);color:var(--text)
 }}
-.panel-search input:focus{{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}}
-.search-info{{font-size:12px;color:var(--text2);min-width:55px;text-align:center;font-weight:500}}
+.panel-search input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}}
+.search-info{{font-size:12px;color:var(--text2);min-width:60px;text-align:center;font-weight:600}}
 .panel-search button{{
-    width:32px;height:32px;border:1px solid var(--border);
-    background:var(--card);border-radius:6px;cursor:pointer;font-size:14px;
-    display:flex;align-items:center;justify-content:center;transition:all 0.2s
+    width:36px;height:36px;border:1px solid var(--border);
+    background:var(--card);border-radius:8px;cursor:pointer;font-size:14px;
+    display:flex;align-items:center;justify-content:center;transition:all 0.2s;color:var(--text2)
 }}
-.panel-search button:hover{{background:var(--hover);border-color:var(--primary);color:var(--primary)}}
+.panel-search button:hover{{background:var(--hover);border-color:var(--accent);color:var(--accent)}}
 
 /* Pinned */
-.pinned{{margin:12px 18px;background:var(--card);border-radius:var(--radius);border:1px solid var(--border)}}
-.pinned summary{{padding:12px;cursor:pointer;font-size:13px;color:var(--primary);font-weight:500;list-style:none}}
+.pinned{{margin:14px 20px;background:var(--card);border-radius:var(--radius);border:1px solid var(--border)}}
+.pinned summary{{padding:14px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600;list-style:none}}
 .pinned summary::-webkit-details-marker{{display:none}}
-.pinned-list{{padding:10px;max-height:180px;overflow-y:auto;border-top:1px solid var(--border)}}
+.pinned-list{{padding:12px;max-height:200px;overflow-y:auto;border-top:1px solid var(--border)}}
 
 /* Messages */
-.messages{{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:6px}}
+.messages{{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:8px}}
 .messages::-webkit-scrollbar{{width:6px}}
 .messages::-webkit-scrollbar-track{{background:transparent}}
-.messages::-webkit-scrollbar-thumb{{background:var(--border);border-radius:3px}}
-.date-sep{{text-align:center;margin:16px 0}}
-.date-sep span{{background:rgba(0,0,0,.05);backdrop-filter:blur(4px);padding:6px 14px;border-radius:16px;font-size:12px;font-weight:500;color:var(--text2)}}
+.messages::-webkit-scrollbar-thumb{{background:var(--border2);border-radius:3px}}
+.date-sep{{text-align:center;margin:20px 0}}
+.date-sep span{{background:var(--card2);padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;color:var(--text2)}}
 
 .msg{{
-    max-width:70%;padding:10px 14px;border-radius:16px;
-    font-size:14px;line-height:1.5;background:var(--msg-in);
+    max-width:70%;padding:12px 16px;border-radius:18px;
+    font-size:14px;line-height:1.6;background:var(--msg-in);
     box-shadow:var(--shadow);word-wrap:break-word
 }}
 .msg.out{{background:var(--msg-out);align-self:flex-end;border-bottom-right-radius:6px}}
 .msg:not(.out){{align-self:flex-start;border-bottom-left-radius:6px}}
-.msg.hl{{background:var(--hl)!important;box-shadow:0 0 0 2px var(--primary)}}
+.msg.hl{{background:var(--hl)!important;box-shadow:0 0 0 2px var(--accent)}}
 
-.msg .sender{{font-size:12px;font-weight:600;color:var(--primary);margin-bottom:4px}}
+.msg .sender{{font-size:12px;font-weight:700;color:var(--accent);margin-bottom:5px}}
 .msg .text{{white-space:pre-wrap}}
-.msg .tm{{font-size:11px;color:var(--text3);text-align:right;margin-top:4px}}
+.msg .tm{{font-size:11px;color:var(--text3);text-align:right;margin-top:6px}}
 
 .msg .quote{{
-    border-left:3px solid var(--primary);padding:6px 10px;margin:6px 0;
-    background:var(--primary-light);border-radius:0 8px 8px 0;font-size:13px
+    border-left:3px solid var(--purple);padding:8px 12px;margin:8px 0;
+    background:rgba(139,92,246,0.1);border-radius:0 10px 10px 0;font-size:13px
 }}
-.msg .quote b{{color:var(--primary-dark)}}
+.msg .quote b{{color:var(--purple)}}
 
 .msg .file{{
-    display:flex;gap:8px;align-items:center;
-    background:var(--hover);padding:8px 10px;
-    border-radius:8px;margin-top:6px
+    display:flex;gap:10px;align-items:center;
+    background:var(--card2);padding:10px 12px;
+    border-radius:10px;margin-top:8px
 }}
-.msg .file a{{color:var(--primary);text-decoration:none;font-size:13px;font-weight:500}}
+.msg .file a{{color:var(--accent);text-decoration:none;font-size:13px;font-weight:600}}
 .msg .file a:hover{{text-decoration:underline}}
 
 /* Mobile */
@@ -480,6 +543,8 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica 
 </style>
 </head>
 <body>
+
+<button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему">🌙</button>
 
 <div class="app">
     {sidebar_items}
@@ -508,6 +573,22 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica 
 </div>
 
 <script>
+// Theme toggle
+function toggleTheme(){{
+    var body=document.body;
+    var btn=document.querySelector('.theme-toggle');
+    body.classList.toggle('light');
+    btn.textContent=body.classList.contains('light')?'🌙':'☀️';
+    localStorage.setItem('theme',body.classList.contains('light')?'light':'dark');
+}}
+// Restore saved theme
+(function(){{
+    if(localStorage.getItem('theme')==='light'){{
+        document.body.classList.add('light');
+        document.querySelector('.theme-toggle').textContent='🌙';
+    }}
+}})();
+
 (function(){{
     var chatItems=document.querySelectorAll('.chat-item');
     var chatList=document.getElementById('chatList');

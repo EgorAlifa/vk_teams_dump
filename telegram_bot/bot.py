@@ -1108,19 +1108,37 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 html_filename = f"vkteams_export_{timestamp}.html"
                 html_path = os.path.join(tmpdir, html_filename)
 
+                # Скачиваем аватарки
+                avatars = {}
+                try:
+                    await safe_edit_text(
+                        status_msg,
+                        f"⏳ <b>Загрузка аватарок...</b>\n\n"
+                        f"📊 Чатов: {len(all_exports)}\n"
+                        f"📝 Сообщений: {total_msgs}",
+                        parse_mode="HTML"
+                    )
+                    chat_sns = [e.get("chat_sn") for e in all_exports if e.get("chat_sn")]
+                    if chat_sns:
+                        avatars = await client.get_avatars_batch(chat_sns, size="small")
+                        print(f"📷 Downloaded {len(avatars)} avatars")
+                except Exception as av_err:
+                    print(f"⚠️ Avatar download error (non-critical): {av_err}")
+
                 # Статус: генерация HTML
                 await safe_edit_text(
                     status_msg,
                     f"⏳ <b>Генерация HTML...</b>\n\n"
                     f"📊 Чатов: {len(all_exports)}\n"
-                    f"📝 Сообщений: {total_msgs}\n\n"
+                    f"📝 Сообщений: {total_msgs}\n"
+                    f"📷 Аватарок: {len(avatars)}\n\n"
                     f"Это может занять время для больших экспортов",
                     parse_mode="HTML"
                 )
 
                 try:
                     print(f"📝 Generating HTML for {len(all_exports)} chats, {total_msgs} messages...")
-                    html_content = format_as_html(final_export)
+                    html_content = format_as_html(final_export, avatars=avatars)
                     print(f"✅ HTML generated: {len(html_content)} bytes")
                 except Exception as html_err:
                     print(f"❌ HTML generation error: {html_err}")
