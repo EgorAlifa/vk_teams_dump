@@ -24,6 +24,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     FSInputFile,
     BotCommand,
+    BotCommandScopeChat,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
@@ -1384,6 +1385,18 @@ async def main():
         BotCommand(command="help", description="Справка"),
     ]
     await bot.set_my_commands(commands)
+
+    # Устанавливаем расширенное меню для админов
+    admin_commands = commands + [
+        BotCommand(command="maintenance", description="⚠️ Уведомить о тех. работах"),
+        BotCommand(command="announce_update", description="🆕 Уведомить об обновлении"),
+    ]
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+            print(f"✅ Админ-меню установлено для {admin_id}")
+        except Exception as e:
+            print(f"⚠️ Не удалось установить админ-меню для {admin_id}: {e}")
 
     log_event("bot_start", data="Bot started")
     print("🚀 Бот запущен!")
