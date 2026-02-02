@@ -1125,17 +1125,42 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 # Скачиваем аватарки
                 avatars = {}
                 try:
+                    # Собираем все уникальные sn (чаты + все участники из сообщений)
+                    all_sns = set()
+
+                    # Добавляем чаты
+                    for export in all_exports:
+                        chat_sn = export.get("chat_sn")
+                        if chat_sn:
+                            all_sns.add(chat_sn)
+
+                        # Добавляем всех отправителей из сообщений
+                        for msg in export.get("messages", []):
+                            sender_sn = (
+                                msg.get("chat", {}).get("sender") or
+                                msg.get("senderSn") or
+                                msg.get("sn") or
+                                msg.get("sender") or
+                                ""
+                            )
+                            if sender_sn:
+                                all_sns.add(sender_sn)
+
+                    all_sns = list(all_sns)
+                    print(f"📷 Collecting avatars for {len(all_sns)} unique participants...")
+
                     await safe_edit_text(
                         status_msg,
                         f"⏳ <b>Загрузка аватарок...</b>\n\n"
                         f"📊 Чатов: {len(all_exports)}\n"
-                        f"📝 Сообщений: {total_msgs}",
+                        f"📝 Сообщений: {total_msgs}\n"
+                        f"👤 Участников: {len(all_sns)}",
                         parse_mode="HTML"
                     )
-                    chat_sns = [e.get("chat_sn") for e in all_exports if e.get("chat_sn")]
-                    if chat_sns:
-                        avatars = await client.get_avatars_batch(chat_sns, size="small")
-                        print(f"📷 Downloaded {len(avatars)} avatars")
+
+                    if all_sns:
+                        avatars = await client.get_avatars_batch(all_sns, size="small")
+                        print(f"✅ Downloaded {len(avatars)}/{len(all_sns)} avatars")
                 except Exception as av_err:
                     print(f"⚠️ Avatar download error (non-critical): {av_err}")
 
