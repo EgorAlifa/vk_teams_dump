@@ -555,21 +555,26 @@ class VKTeamsClient:
         Returns:
             Image bytes or None if not available
         """
-        # VK Teams avatar URL pattern
+        import random
+
         size_map = {"small": "64", "medium": "128", "large": "256"}
         px = size_map.get(size, "64")
 
-        # Try different avatar URL patterns
+        # Random parameter to avoid caching
+        r = random.randint(1000000, 9999999)
+
+        # VK Teams avatar API - correct endpoint with aimsid in URL
         avatar_urls = [
-            f"https://files.myteam.vmailru.net/avatar/get?targetSn={sn}&size={px}x{px}",
-            f"https://u.myteam.vmailru.net/avatar/get?targetSn={sn}&size={px}x{px}",
+            f"https://ub.myteam.vmailru.net/api/v139/files/avatar/get?targetSn={sn}&aimsid={self.session.aimsid}&size={px}&r={r}",
+            f"https://u.myteam.vmailru.net/api/v139/files/avatar/get?targetSn={sn}&aimsid={self.session.aimsid}&size={px}&r={r}",
         ]
 
         headers = {
-            "Accept": "image/*",
+            "Accept": "image/*,*/*",
             "Origin": "https://myteam.mail.ru",
             "Referer": "https://myteam.mail.ru/",
             "x-teams-aimsid": self.session.aimsid,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
         http = self._get_http_session()
@@ -577,11 +582,32 @@ class VKTeamsClient:
         for avatar_url in avatar_urls:
             try:
                 async with http.get(avatar_url, headers=headers, timeout=10) as response:
-                    if response.status == 200 and response.content_type.startswith("image/"):
+                    logger.debug(f"Avatar response for {sn}: status={response.status}, type={response.content_type}")
+
+                    if response.status == 200:
                         data = await response.read()
-                        if len(data) > 100:  # Valid image (not empty/error)
-                            logger.debug(f"Got avatar for {sn}: {len(data)} bytes")
-                            return data
+
+                        # Check if response is base64 data URL
+                        if data and data.startswith(b'data:image/'):
+                            # Parse base64 data URL
+                            try:
+                                data_str = data.decode('utf-8')
+                                if ';base64,' in data_str:
+                                    b64_data = data_str.split(';base64,')[1]
+                                    import base64
+                                    data = base64.b64decode(b64_data)
+                                    logger.debug(f"Got avatar (base64) for {sn}: {len(data)} bytes")
+                                    return data
+                            except Exception as e:
+                                logger.debug(f"Base64 parse error for {sn}: {e}")
+
+                        # Direct image data
+                        if data and len(data) > 100:
+                            # Check if it's actually an image
+                            if data[:4] in (b'\x89PNG', b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'GIF8'):
+                                logger.debug(f"Got avatar (binary) for {sn}: {len(data)} bytes")
+                                return data
+
             except Exception as e:
                 logger.debug(f"Avatar fetch failed for {sn}: {e}")
                 continue
