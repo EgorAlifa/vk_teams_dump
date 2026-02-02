@@ -34,13 +34,14 @@ from export_formatter import format_as_html, format_as_json
 
 # Stats tracking (lightweight)
 try:
-    from stats import log_event, update_active_user, get_active_user_ids
+    from stats import log_event, update_active_user, get_active_user_ids, update_user_export
     STATS_ENABLED = True
 except ImportError:
     STATS_ENABLED = False
     def log_event(*args, **kwargs): pass
     def update_active_user(*args, **kwargs): pass
     def get_active_user_ids(): return []
+    def update_user_export(*args, **kwargs): pass
 
 # Роутер для хэндлеров
 router = Router()
@@ -1210,6 +1211,9 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         support_text = f"\n\nПри проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>"
 
     log_event("export_complete", user_id, f"chats={len(all_exports)},messages={total_msgs},errors={len(errors)},no_dialogs={len(no_dialogs)}")
+
+    # Обновляем статус экспорта пользователя для мониторинга
+    update_user_export(user_id, success=not critical_error and not errors, errors=errors if errors else None)
 
     await callback.message.answer(
         f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"

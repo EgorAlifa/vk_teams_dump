@@ -58,12 +58,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .card-title { font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px; }
         .card-value { font-size: 32px; font-weight: 600; color: var(--accent); }
         .card-value.green { color: var(--green); }
-        table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
+        .table-container { max-height: 500px; overflow-y: auto; background: var(--card); border-radius: 12px; }
+        table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #334155; }
-        th { background: #334155; font-size: 12px; text-transform: uppercase; }
+        th { background: #334155; font-size: 12px; text-transform: uppercase; position: sticky; top: 0; z-index: 1; }
         .refresh-btn { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin-bottom: 20px; }
         .refresh-btn:hover { opacity: 0.9; }
         .updated { font-size: 12px; color: #64748b; margin-bottom: 10px; }
+        .status-ok { color: #22c55e; }
+        .status-err { color: #ef4444; }
+        .status-na { color: #64748b; font-style: italic; }
+        .errors { font-size: 11px; color: #f97316; max-width: 300px; word-break: break-word; }
     </style>
 </head>
 <body>
@@ -98,13 +103,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
     </div>
 
-    <h2 style="margin: 20px 0 15px;">Recent Users</h2>
-    <table>
-        <thead>
-            <tr><th>User ID</th><th>Username</th><th>Email</th><th>Last Seen</th></tr>
-        </thead>
-        <tbody id="users-table"></tbody>
-    </table>
+    <h2 style="margin: 20px 0 15px;">Users (<span id="user-count">0</span>)</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr><th>User ID</th><th>Username</th><th>Email</th><th>Last Seen</th><th>Экспорт</th><th>Ошибки</th></tr>
+            </thead>
+            <tbody id="users-table"></tbody>
+        </table>
+    </div>
 
     <script>
         async function loadStats() {
@@ -120,15 +127,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('events-today').textContent = data.total_events_today || 0;
                 document.getElementById('updated').textContent = 'Updated: ' + new Date().toLocaleString();
 
+                const users = data.recent_users || [];
+                document.getElementById('user-count').textContent = users.length;
+
                 const tbody = document.getElementById('users-table');
-                tbody.innerHTML = (data.recent_users || []).map(u => `
+                tbody.innerHTML = users.map(u => {
+                    let exportStatus, exportClass;
+                    if (u.last_export_time === null) {
+                        exportStatus = 'нет данных';
+                        exportClass = 'status-na';
+                    } else if (u.last_export_success === 1) {
+                        exportStatus = '✓ OK';
+                        exportClass = 'status-ok';
+                    } else {
+                        exportStatus = '✗ Ошибка';
+                        exportClass = 'status-err';
+                    }
+                    const errors = u.last_export_errors || '-';
+                    return `
                     <tr>
                         <td>${u.user_id}</td>
                         <td>${u.username || '-'}</td>
                         <td>${u.email || '-'}</td>
                         <td>${new Date(u.last_seen).toLocaleString()}</td>
+                        <td class="${exportClass}">${exportStatus}</td>
+                        <td class="errors">${errors}</td>
                     </tr>
-                `).join('');
+                `}).join('');
             } catch (e) {
                 console.error(e);
             }
