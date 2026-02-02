@@ -5,16 +5,31 @@ Uses only Python stdlib - no extra dependencies
 
 import json
 import os
+import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from stats import get_stats
+from stats import get_stats, save_metrics, get_metrics_history
 
 PORT = int(os.environ.get("STATS_PORT", 8080))
+METRICS_INTERVAL = 60  # Сохранять метрики каждые 60 секунд
+
+
+def metrics_collector():
+    """Background thread to collect metrics periodically"""
+    while True:
+        try:
+            save_metrics()
+        except Exception as e:
+            print(f"Metrics collector error: {e}")
+        time.sleep(METRICS_INTERVAL)
 
 
 class StatsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/stats":
             self.send_json(get_stats())
+        elif self.path == "/api/metrics/history":
+            self.send_json(get_metrics_history(24))
         elif self.path == "/" or self.path == "/stats":
             self.send_html()
         elif self.path == "/health":
@@ -288,8 +303,73 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
 
+        /* Charts */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .chart-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .chart-title {
+            font-size: 13px;
+            color: var(--text2);
+            font-weight: 500;
+        }
+        .chart-legend {
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: var(--text2);
+        }
+        .chart-legend span::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
+            margin-right: 4px;
+        }
+        .legend-cpu::before { background: #6366f1; }
+        .legend-mem::before { background: #22c55e; }
+        .chart-container {
+            position: relative;
+            height: 150px;
+        }
+        .chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        .chart-time {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: var(--text2);
+            margin-top: 8px;
+        }
+        .no-data {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 150px;
+            color: var(--text2);
+            font-size: 13px;
+        }
+
         @media (max-width: 1200px) {
             .stats-grid { grid-template-columns: repeat(3, 1fr); }
+            .charts-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 768px) {
             .system-grid { grid-template-columns: 1fr; }
@@ -339,6 +419,38 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 </div>
                 <div class="metric-bar"><div class="metric-bar-fill green" id="disk-bar" style="width:0%"></div></div>
                 <div class="metric-detail" id="disk-detail">0 / 0 GB</div>
+            </div>
+        </div>
+
+        <div class="section-title">История (24ч)</div>
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <span class="chart-title">CPU / Memory</span>
+                    <div class="chart-legend">
+                        <span class="legend-cpu">CPU</span>
+                        <span class="legend-mem">Memory</span>
+                    </div>
+                </div>
+                <div class="chart-container" id="chart-cpu-mem">
+                    <canvas id="canvas-cpu-mem"></canvas>
+                </div>
+                <div class="chart-time">
+                    <span id="chart-time-start">-</span>
+                    <span id="chart-time-end">сейчас</span>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <span class="chart-title">Memory Usage (GB)</span>
+                </div>
+                <div class="chart-container" id="chart-mem-gb">
+                    <canvas id="canvas-mem-gb"></canvas>
+                </div>
+                <div class="chart-time">
+                    <span id="chart-time-start2">-</span>
+                    <span id="chart-time-end2">сейчас</span>
+                </div>
             </div>
         </div>
 
@@ -482,12 +594,126 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         loadStats();
         setInterval(loadStats, 10000);
+
+        // Charts
+        function drawChart(canvasId, data, keys, colors, maxVal = 100) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !data.length) return;
+
+            const ctx = canvas.getContext('2d');
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * 2;
+            canvas.height = rect.height * 2;
+            ctx.scale(2, 2);
+
+            const w = rect.width;
+            const h = rect.height;
+            const padding = { top: 10, right: 10, bottom: 10, left: 30 };
+            const chartW = w - padding.left - padding.right;
+            const chartH = h - padding.top - padding.bottom;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Grid lines
+            ctx.strokeStyle = '#2a2a3a';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = padding.top + (chartH / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(w - padding.right, y);
+                ctx.stroke();
+            }
+
+            // Y-axis labels
+            ctx.fillStyle = '#71717a';
+            ctx.font = '9px system-ui';
+            ctx.textAlign = 'right';
+            for (let i = 0; i <= 4; i++) {
+                const y = padding.top + (chartH / 4) * i;
+                const val = Math.round(maxVal - (maxVal / 4) * i);
+                ctx.fillText(val, padding.left - 5, y + 3);
+            }
+
+            // Draw lines
+            keys.forEach((key, ki) => {
+                ctx.strokeStyle = colors[ki];
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+
+                data.forEach((point, i) => {
+                    const x = padding.left + (i / (data.length - 1)) * chartW;
+                    const val = Math.min(point[key] || 0, maxVal);
+                    const y = padding.top + chartH - (val / maxVal) * chartH;
+
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+
+                // Fill area under line
+                ctx.globalAlpha = 0.1;
+                ctx.lineTo(padding.left + chartW, padding.top + chartH);
+                ctx.lineTo(padding.left, padding.top + chartH);
+                ctx.closePath();
+                ctx.fillStyle = colors[ki];
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            });
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch('/api/metrics/history');
+                const data = await res.json();
+
+                if (!data.length) {
+                    document.getElementById('chart-cpu-mem').innerHTML = '<div class="no-data">Нет данных. Подождите несколько минут.</div>';
+                    document.getElementById('chart-mem-gb').innerHTML = '<div class="no-data">Нет данных</div>';
+                    return;
+                }
+
+                // CPU/Memory percent chart
+                drawChart('canvas-cpu-mem', data, ['cpu_percent', 'mem_percent'], ['#6366f1', '#22c55e'], 100);
+
+                // Memory GB chart
+                const maxMem = Math.max(...data.map(d => d.mem_used_gb || 0)) * 1.2 || 10;
+                drawChart('canvas-mem-gb', data, ['mem_used_gb'], ['#22c55e'], maxMem);
+
+                // Time labels
+                if (data.length > 0) {
+                    const first = new Date(data[0].timestamp);
+                    const last = new Date(data[data.length - 1].timestamp);
+                    const fmt = d => d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
+                    document.getElementById('chart-time-start').textContent = fmt(first);
+                    document.getElementById('chart-time-start2').textContent = fmt(first);
+                }
+            } catch (e) {
+                console.error('Failed to load history:', e);
+            }
+        }
+
+        loadHistory();
+        setInterval(loadHistory, 60000);
+
+        // Handle resize
+        window.addEventListener('resize', () => {
+            loadHistory();
+        });
     </script>
 </body>
 </html>"""
 
 
 if __name__ == "__main__":
+    # Запускаем сборщик метрик в фоне
+    collector_thread = threading.Thread(target=metrics_collector, daemon=True)
+    collector_thread.start()
+    print(f"Metrics collector started (interval: {METRICS_INTERVAL}s)")
+
+    # Сохраняем первую точку сразу
+    save_metrics()
+
     print(f"Stats server running on http://0.0.0.0:{PORT}")
     server = HTTPServer(("0.0.0.0", PORT), StatsHandler)
     server.serve_forever()

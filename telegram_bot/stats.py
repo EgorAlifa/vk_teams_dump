@@ -105,8 +105,19 @@ def init_db():
                 last_export_errors TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS metrics_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                cpu_percent REAL,
+                cpu_load REAL,
+                mem_percent REAL,
+                mem_used_gb REAL,
+                disk_percent REAL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
             CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
         """)
         # Добавляем новые колонки если их нет (для совместимости)
         try:
@@ -181,6 +192,46 @@ def update_user_export(user_id: int, success: bool, errors: list = None):
             """, (datetime.now().isoformat(), 1 if success else 0, errors_text, user_id))
     except Exception as e:
         print(f"Stats error: {e}")
+
+
+def save_metrics():
+    """Save current system metrics to history (call periodically)"""
+    try:
+        metrics = get_system_metrics()
+        with get_db() as conn:
+            conn.execute("""
+                INSERT INTO metrics_history (timestamp, cpu_percent, cpu_load, mem_percent, mem_used_gb, disk_percent)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.now().isoformat(),
+                metrics.get('cpu_percent', 0),
+                metrics.get('cpu_load_1m', 0),
+                metrics.get('mem_percent', 0),
+                metrics.get('mem_used_gb', 0),
+                metrics.get('disk_percent', 0)
+            ))
+            # Удаляем старые записи (старше 24 часов)
+            day_ago = (datetime.now() - timedelta(hours=24)).isoformat()
+            conn.execute("DELETE FROM metrics_history WHERE timestamp < ?", (day_ago,))
+    except Exception as e:
+        print(f"Stats error saving metrics: {e}")
+
+
+def get_metrics_history(hours: int = 24) -> list:
+    """Get metrics history for the last N hours"""
+    try:
+        with get_db() as conn:
+            since = (datetime.now() - timedelta(hours=hours)).isoformat()
+            rows = conn.execute("""
+                SELECT timestamp, cpu_percent, cpu_load, mem_percent, mem_used_gb, disk_percent
+                FROM metrics_history
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+            """, (since,)).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"Stats error getting metrics history: {e}")
+        return []
 
 
 def get_stats() -> dict:
