@@ -118,7 +118,7 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
         else:
             avatar_html = avatar_letter
 
-        # Собираем участников
+        # Собираем участников (с приоритетом словаря имён)
         chat_members = {}
         for msg in messages:
             sender_sn = (
@@ -129,8 +129,10 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
                 ""
             )
             if sender_sn and sender_sn not in chat_members:
+                # Приоритет: словарь имён > senderNick > friendly > sn
+                friendly = names.get(sender_sn) or msg.get("senderNick") or msg.get("friendly") or ""
                 chat_members[sender_sn] = {
-                    "friendly": msg.get("senderNick") or msg.get("friendly") or "",
+                    "friendly": friendly,
                     "sn": sender_sn
                 }
 
@@ -145,7 +147,7 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
                     current_date = msg_date
                     messages_html += f'<div class="date-sep"><span>{msg_date}</span></div>'
 
-            messages_html += render_message(msg, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal)
+            messages_html += render_message(msg, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal, names=names)
 
         # Закреплённые
         pinned = chat.get("pinned_messages", [])
@@ -155,7 +157,7 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
             <details class="pinned">
                 <summary>📌 Закреплённых: {len(pinned)}</summary>
                 <div class="pinned-list">
-                    {"".join(render_message(m, pinned=True, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal) for m in pinned)}
+                    {"".join(render_message(m, pinned=True, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal, names=names) for m in pinned)}
                 </div>
             </details>
             '''
@@ -817,8 +819,9 @@ function toggleTheme(){{
 </html>'''
 
 
-def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, chat_sn: str = "", is_personal: bool = False) -> str:
+def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, chat_sn: str = "", is_personal: bool = False, names: dict = None) -> str:
     """Рендер одного сообщения"""
+    names = names or {}
     is_outgoing = msg.get("outgoing", False)
 
     sender_sn = (
@@ -832,10 +835,13 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
     if is_personal:
         sender_name = ""
     else:
-        sender_name = msg.get("senderNick") or msg.get("friendly") or ""
-        if chat_members and sender_sn:
+        # Приоритет: словарь имён > chat_members > senderNick > friendly > sn
+        sender_name = names.get(sender_sn) or ""
+        if not sender_name and chat_members and sender_sn:
             member_info = chat_members.get(sender_sn, {})
-            sender_name = member_info.get("friendly") or member_info.get("name") or sender_name
+            sender_name = member_info.get("friendly") or member_info.get("name") or ""
+        if not sender_name:
+            sender_name = msg.get("senderNick") or msg.get("friendly") or ""
         if not sender_name and sender_sn:
             sender_name = sender_sn
 

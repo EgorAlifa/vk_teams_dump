@@ -1116,7 +1116,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     # Используем имя только если это не email/sn
                     if sn and name and name != sn and "@" not in name:
                         names[sn] = name
-                print(f"📛 Built names dictionary: {len(names)} entries")
+                print(f"👤 Loaded contact names: {len(names)} entries")
 
                 # Скачиваем аватарки
                 avatars = {}
@@ -1142,7 +1142,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     f"📊 Чатов: {len(all_exports)}\n"
                     f"📝 Сообщений: {total_msgs}\n"
                     f"📷 Аватарок: {len(avatars)}\n"
-                    f"📛 Имён: {len(names)}\n\n"
+                    f"👤 Контактов: {len(names)}\n\n"
                     f"Это может занять время для больших экспортов",
                     parse_mode="HTML"
                 )
@@ -1324,19 +1324,36 @@ async def cmd_maintenance(message: Message):
 
 @router.message(Command("announce_update"))
 async def cmd_announce_update(message: Message):
-    """Admin: Notify all users about bot updates"""
+    """
+    Admin: Notify all users about bot updates
+    Usage: /announce_update [custom message]
+    If custom message is provided, it will be used instead of default text
+    """
     if message.from_user.id not in config.ADMIN_IDS:
         await message.answer("❌ Эта команда доступна только администраторам.")
         return
 
-    status_msg = await message.answer("⏳ Отправляю уведомления...")
+    # Извлекаем пользовательский текст после команды
+    custom_text = message.text.replace("/announce_update", "").strip() if message.text else ""
 
-    broadcast_text = (
-        "🆕 <b>Обновление бота</b>\n\n"
-        "В боте появились новые функции и улучшения!\n\n"
-        "Для просмотра изменений сделайте новую выгрузку через /chats\n\n"
-        f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
-    )
+    if custom_text:
+        # Используем пользовательский текст
+        broadcast_text = (
+            "🆕 <b>Обновление бота</b>\n\n"
+            f"{custom_text}\n\n"
+            f"Для новой выгрузки используйте /chats\n\n"
+            f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
+        )
+    else:
+        # Дефолтный текст
+        broadcast_text = (
+            "🆕 <b>Обновление бота</b>\n\n"
+            "В боте появились новые функции и улучшения!\n\n"
+            "Для просмотра изменений сделайте новую выгрузку через /chats\n\n"
+            f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
+        )
+
+    status_msg = await message.answer("⏳ Отправляю уведомления...")
 
     sent, failed = await broadcast_message(message.bot, broadcast_text, exclude_user_id=message.from_user.id)
 
