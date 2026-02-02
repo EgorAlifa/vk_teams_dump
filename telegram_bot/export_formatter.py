@@ -35,24 +35,40 @@ def format_as_html(data: dict) -> str:
         is_personal = "@chat.agent" not in chat_sn
         msg_count = len(messages)
 
-        # Для личных чатов: ищем имя собеседника и форматируем "Имя Фамилия (email)"
+        # Определяем отображаемое имя чата
         if is_personal and chat_sn and "@" in chat_sn:
+            # Личный чат - ищем имя собеседника
             friendly_name = None
-            # Ищем friendly имя в сообщениях от этого человека
-            for msg in messages:
-                sender_sn = msg.get("chat", {}).get("sender") or msg.get("senderSn") or ""
-                if sender_sn == chat_sn:
-                    fn = msg.get("senderNick") or msg.get("friendly") or ""
-                    # Проверяем что это настоящее имя, а не placeholder
-                    if fn and fn.strip() not in ("", "- -", "--", chat_sn):
-                        friendly_name = fn.strip()
+
+            # 1. Проверяем chat_name - API мог уже дать имя
+            if raw_chat_name and raw_chat_name != chat_sn and "@" not in raw_chat_name:
+                friendly_name = raw_chat_name
+
+            # 2. Ищем в сообщениях от этого человека
+            if not friendly_name:
+                for msg in messages:
+                    sender_sn = msg.get("chat", {}).get("sender") or msg.get("senderSn") or ""
+                    if sender_sn == chat_sn:
+                        fn = msg.get("senderNick") or msg.get("friendly") or ""
+                        if fn and fn.strip() not in ("", "- -", "--", chat_sn) and "@" not in fn:
+                            friendly_name = fn.strip()
+                            break
+
+            # 3. Ищем в любых сообщениях где упоминается этот sn
+            if not friendly_name:
+                for msg in messages:
+                    # Может быть в outgoing сообщениях как получатель
+                    msg_friendly = msg.get("friendly") or ""
+                    if msg_friendly and msg_friendly.strip() not in ("", "- -", "--") and "@" not in msg_friendly:
+                        friendly_name = msg_friendly.strip()
                         break
 
-            if friendly_name and friendly_name.lower() != chat_sn.lower():
+            if friendly_name:
                 chat_name = escape(f"{friendly_name} ({chat_sn})")
             else:
                 chat_name = escape(chat_sn)
         else:
+            # Групповой чат - используем имя как есть
             chat_name = escape(raw_chat_name)
 
         # Последнее сообщение для превью

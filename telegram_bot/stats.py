@@ -5,10 +5,80 @@ Lightweight monitoring for VK Teams Export Bot
 
 import sqlite3
 import os
+import subprocess
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 DB_PATH = os.environ.get("STATS_DB_PATH", "data/stats.db")
+
+
+def get_system_metrics() -> dict:
+    """Get system metrics (CPU, memory, disk)"""
+    metrics = {}
+
+    try:
+        # CPU usage (from /proc/stat)
+        with open('/proc/stat', 'r') as f:
+            line = f.readline()
+            fields = line.split()[1:5]
+            idle = int(fields[3])
+            total = sum(int(x) for x in fields)
+
+        # Store for delta calculation (simple approach - instant load)
+        with open('/proc/loadavg', 'r') as f:
+            load = f.read().split()
+            metrics['cpu_load_1m'] = float(load[0])
+            metrics['cpu_load_5m'] = float(load[1])
+            metrics['cpu_load_15m'] = float(load[2])
+
+        # CPU cores
+        cpu_count = os.cpu_count() or 1
+        metrics['cpu_cores'] = cpu_count
+        metrics['cpu_percent'] = round(metrics['cpu_load_1m'] / cpu_count * 100, 1)
+
+    except Exception:
+        metrics['cpu_percent'] = 0
+        metrics['cpu_load_1m'] = 0
+
+    try:
+        # Memory (from /proc/meminfo)
+        mem = {}
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    mem[parts[0].rstrip(':')] = int(parts[1])
+
+        total_kb = mem.get('MemTotal', 0)
+        available_kb = mem.get('MemAvailable', mem.get('MemFree', 0))
+        used_kb = total_kb - available_kb
+
+        metrics['mem_total_gb'] = round(total_kb / 1024 / 1024, 1)
+        metrics['mem_used_gb'] = round(used_kb / 1024 / 1024, 1)
+        metrics['mem_percent'] = round(used_kb / total_kb * 100, 1) if total_kb else 0
+
+    except Exception:
+        metrics['mem_percent'] = 0
+        metrics['mem_total_gb'] = 0
+        metrics['mem_used_gb'] = 0
+
+    try:
+        # Disk usage
+        stat = os.statvfs('/')
+        total = stat.f_blocks * stat.f_frsize
+        free = stat.f_bavail * stat.f_frsize
+        used = total - free
+
+        metrics['disk_total_gb'] = round(total / 1024 / 1024 / 1024, 1)
+        metrics['disk_used_gb'] = round(used / 1024 / 1024 / 1024, 1)
+        metrics['disk_percent'] = round(used / total * 100, 1) if total else 0
+
+    except Exception:
+        metrics['disk_percent'] = 0
+        metrics['disk_total_gb'] = 0
+        metrics['disk_used_gb'] = 0
+
+    return metrics
 
 
 def init_db():
@@ -179,7 +249,8 @@ def get_stats() -> dict:
                 "total_exports": total_exports,
                 "exports_today": exports_today,
                 "auth_today": auth_today,
-                "recent_users": [dict(u) for u in recent_users]
+                "recent_users": [dict(u) for u in recent_users],
+                "system": get_system_metrics()
             }
     except Exception as e:
         return {"error": str(e)}
