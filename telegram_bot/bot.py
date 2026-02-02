@@ -1037,6 +1037,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     no_dialogs = []  # Контакты без диалога (не ошибка)
     no_access = []   # Чаты без доступа (Permission denied)
     critical_error = None
+    avatars = {}  # Словарь аватарок (собираем по ходу экспорта)
 
     # Получаем данные о чатах заранее
     state_data = await state.get_data()
@@ -1065,6 +1066,31 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 # Экспортируем чат
                 export_data = await client.export_chat(sn)
                 all_exports.append(export_data)
+
+                # Скачиваем аватарки для участников этого чата
+                if format_type in ("html", "both"):
+                    chat_sns = set()
+                    # Добавляем сам чат
+                    if export_data.get("chat_sn"):
+                        chat_sns.add(export_data["chat_sn"])
+                    # Добавляем всех участников из сообщений
+                    for msg in export_data.get("messages", []):
+                        sender_sn = (
+                            msg.get("chat", {}).get("sender") or
+                            msg.get("senderSn") or
+                            msg.get("sn") or
+                            msg.get("sender") or
+                            ""
+                        )
+                        if sender_sn:
+                            chat_sns.add(sender_sn)
+
+                    # Скачиваем только новые аватарки (которых еще нет)
+                    new_sns = [s for s in chat_sns if s not in avatars]
+                    if new_sns:
+                        new_avatars = await client.get_avatars_batch(new_sns, size="small")
+                        avatars.update(new_avatars)
+                        print(f"📷 Chat {i+1}/{total}: downloaded {len(new_avatars)} new avatars (total: {len(avatars)})")
 
                 # Небольшая пауза между чатами
                 await asyncio.sleep(0.3)
@@ -1121,48 +1147,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     if sn and name and name != sn and "@" not in name:
                         names[sn] = name
                 print(f"👤 Loaded contact names: {len(names)} entries")
-
-                # Скачиваем аватарки
-                avatars = {}
-                try:
-                    # Собираем все уникальные sn (чаты + все участники из сообщений)
-                    all_sns = set()
-
-                    # Добавляем чаты
-                    for export in all_exports:
-                        chat_sn = export.get("chat_sn")
-                        if chat_sn:
-                            all_sns.add(chat_sn)
-
-                        # Добавляем всех отправителей из сообщений
-                        for msg in export.get("messages", []):
-                            sender_sn = (
-                                msg.get("chat", {}).get("sender") or
-                                msg.get("senderSn") or
-                                msg.get("sn") or
-                                msg.get("sender") or
-                                ""
-                            )
-                            if sender_sn:
-                                all_sns.add(sender_sn)
-
-                    all_sns = list(all_sns)
-                    print(f"📷 Collecting avatars for {len(all_sns)} unique participants...")
-
-                    await safe_edit_text(
-                        status_msg,
-                        f"⏳ <b>Загрузка аватарок...</b>\n\n"
-                        f"📊 Чатов: {len(all_exports)}\n"
-                        f"📝 Сообщений: {total_msgs}\n"
-                        f"👤 Участников: {len(all_sns)}",
-                        parse_mode="HTML"
-                    )
-
-                    if all_sns:
-                        avatars = await client.get_avatars_batch(all_sns, size="small")
-                        print(f"✅ Downloaded {len(avatars)}/{len(all_sns)} avatars")
-                except Exception as av_err:
-                    print(f"⚠️ Avatar download error (non-critical): {av_err}")
+                print(f"📷 Total avatars collected: {len(avatars)}")
 
                 # Статус: генерация HTML
                 await safe_edit_text(
