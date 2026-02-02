@@ -1035,6 +1035,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     all_exports = []
     errors = []
     no_dialogs = []  # Контакты без диалога (не ошибка)
+    no_access = []   # Чаты без доступа (Permission denied)
     critical_error = None
 
     # Получаем данные о чатах заранее
@@ -1073,6 +1074,9 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 if "No such dialogue" in err_str:
                     # Это не ошибка - просто нет диалога с контактом
                     no_dialogs.append(sn)
+                elif "'code': 40300" in err_str or "Permission denied" in err_str:
+                    # Нет доступа к чату (заблокирован, удалён, или служебный чат)
+                    no_access.append(sn)
                 else:
                     errors.append(f"{sn}: {err_str}")
 
@@ -1232,15 +1236,35 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         if len(errors) > 5:
             error_text += f"\n... и ещё {len(errors) - 5}"
     if no_dialogs:
-        error_text += f"\n\nℹ️ Нет диалога ({len(no_dialogs)}): " + ", ".join(no_dialogs[:5])
+        # Получаем имена контактов без диалогов
+        no_dialog_names = []
+        for sn in no_dialogs[:5]:
+            chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
+            name = chat_info.get("name") or chat_info.get("friendly") or sn
+            no_dialog_names.append(name)
+
+        error_text += f"\n\nℹ️ Нет диалога ({len(no_dialogs)}): " + ", ".join(no_dialog_names)
         if len(no_dialogs) > 5:
             error_text += f" и ещё {len(no_dialogs) - 5}"
+
+    if no_access:
+        # Получаем имена чатов для которых нет доступа
+        no_access_names = []
+        for sn in no_access[:5]:
+            chat_info = next((c for c in all_chats if c.get("sn") == sn), {})
+            name = chat_info.get("name") or chat_info.get("friendly") or sn
+            no_access_names.append(name)
+
+        error_text += f"\n\n🚫 Нет доступа ({len(no_access)}): " + ", ".join(no_access_names)
+        if len(no_access) > 5:
+            error_text += f" и ещё {len(no_access) - 5}"
+        error_text += "\n<i>Возможные причины: заблокирован, удалён из чата, или служебный чат</i>"
 
     support_text = ""
     if critical_error or errors:
         support_text = f"\n\nПри проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>"
 
-    log_event("export_complete", user_id, f"chats={len(all_exports)},messages={total_msgs},errors={len(errors)},no_dialogs={len(no_dialogs)}")
+    log_event("export_complete", user_id, f"chats={len(all_exports)},messages={total_msgs},errors={len(errors)},no_dialogs={len(no_dialogs)},no_access={len(no_access)}")
 
     # Обновляем статус экспорта пользователя для мониторинга
     update_user_export(user_id, success=not critical_error and not errors, errors=errors if errors else None)
