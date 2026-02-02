@@ -310,12 +310,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .badge.err { background: var(--red-bg); color: var(--red); }
         .badge.na { background: var(--card-hover); color: var(--text2); }
         .errors-cell {
-            max-width: 250px;
+            max-width: 400px;
             font-size: 11px;
             color: var(--yellow);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.4;
         }
         .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
 
@@ -583,7 +583,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     } else {
                         badge = '<span class="badge err">✗ Ошибка</span>';
                     }
-                    const errors = u.last_export_errors ? `<span title="${u.last_export_errors}">${u.last_export_errors}</span>` : '-';
+                    const errors = u.last_export_errors || '-';
                     const lastSeen = new Date(u.last_seen);
                     const timeStr = lastSeen.toLocaleString('ru-RU', {
                         day: '2-digit', month: '2-digit',
