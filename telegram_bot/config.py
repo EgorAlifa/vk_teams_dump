@@ -6,6 +6,11 @@ load_dotenv()
 # Telegram Bot Token (получить у @BotFather)
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 
+# Admin user IDs (comma-separated Telegram user IDs)
+# Example: ADMIN_IDS=123456789,987654321
+_admin_ids_str = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(x.strip()) for x in _admin_ids_str.split(",") if x.strip().isdigit()]
+
 # VK Teams API
 VKTEAMS_API_BASE = os.getenv("VKTEAMS_API_BASE", "https://u.myteam.vmailru.net/api/v139/rapi")
 VKTEAMS_AUTH_BASE = os.getenv("VKTEAMS_AUTH_BASE", "https://u.myteam.vmailru.net/auth")

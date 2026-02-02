@@ -1236,6 +1236,89 @@ async def cmd_export(message: Message):
     await cmd_chats(message, FSMContext)
 
 
+# ============== Admin Commands ==============
+
+async def broadcast_message(bot: Bot, message_text: str, exclude_user_id: int = None) -> tuple[int, int]:
+    """Broadcast message to all active users
+    Returns: (sent_count, failed_count)
+    """
+    # Get all users to notify
+    active_user_ids = get_active_user_ids()
+    all_user_ids = set(active_user_ids) | set(user_sessions.keys())
+
+    if exclude_user_id:
+        all_user_ids.discard(exclude_user_id)
+
+    sent = 0
+    failed = 0
+
+    for user_id in all_user_ids:
+        try:
+            await bot.send_message(user_id, message_text, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+
+        await asyncio.sleep(0.05)  # Rate limit
+
+    return sent, failed
+
+
+@router.message(Command("maintenance"))
+async def cmd_maintenance(message: Message):
+    """Admin: Notify all users about technical maintenance"""
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("❌ Эта команда доступна только администраторам.")
+        return
+
+    status_msg = await message.answer("⏳ Отправляю уведомления...")
+
+    broadcast_text = (
+        "⚠️ <b>Технические работы</b>\n\n"
+        "Планируются технические работы.\n"
+        "Бот может быть временно недоступен.\n\n"
+        "Приносим извинения за неудобства.\n\n"
+        f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
+    )
+
+    sent, failed = await broadcast_message(message.bot, broadcast_text, exclude_user_id=message.from_user.id)
+
+    await safe_edit_text(
+        status_msg,
+        f"✅ <b>Уведомление отправлено</b>\n\n"
+        f"📨 Успешно: {sent}\n"
+        f"❌ Не доставлено: {failed}",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("announce_update"))
+async def cmd_announce_update(message: Message):
+    """Admin: Notify all users about bot updates"""
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("❌ Эта команда доступна только администраторам.")
+        return
+
+    status_msg = await message.answer("⏳ Отправляю уведомления...")
+
+    broadcast_text = (
+        "🆕 <b>Обновление бота</b>\n\n"
+        "В боте появились новые функции и улучшения!\n\n"
+        "Для просмотра изменений сделайте новую выгрузку через /chats\n\n"
+        f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
+    )
+
+    sent, failed = await broadcast_message(message.bot, broadcast_text, exclude_user_id=message.from_user.id)
+
+    await safe_edit_text(
+        status_msg,
+        f"✅ <b>Уведомление отправлено</b>\n\n"
+        f"📨 Успешно: {sent}\n"
+        f"❌ Не доставлено: {failed}",
+        parse_mode="HTML"
+    )
+
+
 # ============== Main ==============
 
 # Global bot reference for shutdown handler
