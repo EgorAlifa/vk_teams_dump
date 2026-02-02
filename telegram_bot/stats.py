@@ -241,6 +241,7 @@ def get_stats() -> dict:
             now = datetime.now()
             today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
             week_ago = (now - timedelta(days=7)).isoformat()
+            month_ago = (now - timedelta(days=30)).isoformat()
             hour_ago = (now - timedelta(hours=1)).isoformat()
 
             # Total events today
@@ -264,6 +265,11 @@ def get_stats() -> dict:
             # Active users (last week)
             active_week = conn.execute(
                 "SELECT COUNT(*) FROM active_users WHERE last_seen >= ?", (week_ago,)
+            ).fetchone()[0]
+
+            # Active users (last month)
+            active_month = conn.execute(
+                "SELECT COUNT(*) FROM active_users WHERE last_seen >= ?", (month_ago,)
             ).fetchone()[0]
 
             # Total exports
@@ -297,6 +303,7 @@ def get_stats() -> dict:
                 "events_by_type": events_by_type,
                 "active_users_hour": active_hour,
                 "active_users_week": active_week,
+                "active_users_month": active_month,
                 "total_exports": total_exports,
                 "exports_today": exports_today,
                 "auth_today": auth_today,
@@ -307,11 +314,11 @@ def get_stats() -> dict:
         return {"error": str(e)}
 
 
-def get_active_user_ids(days: int = 7) -> list[int]:
+def get_active_user_ids(days: int = 30) -> list[int]:
     """Get list of recently active user IDs (for broadcast/notification)
 
     Args:
-        days: Number of days to look back (default 7)
+        days: Number of days to look back (default 30)
     """
     try:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()

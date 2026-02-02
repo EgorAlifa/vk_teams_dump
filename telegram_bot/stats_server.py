@@ -462,7 +462,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Активных (7д)</div>
-                <div class="stat-value accent" id="active-week">0</div>
+                <div class="stat-value" id="active-week">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Активных (30д)</div>
+                <div class="stat-value accent" id="active-month">0</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Экспортов сегодня</div>
@@ -475,10 +479,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="stat-card">
                 <div class="stat-label">Авторизаций</div>
                 <div class="stat-value" id="auth-today">0</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Событий</div>
-                <div class="stat-value" id="events-today">0</div>
             </div>
         </div>
 
@@ -544,10 +544,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 // Stats
                 document.getElementById('active-hour').textContent = data.active_users_hour || 0;
                 document.getElementById('active-week').textContent = data.active_users_week || 0;
+                document.getElementById('active-month').textContent = data.active_users_month || 0;
                 document.getElementById('exports-today').textContent = data.exports_today || 0;
                 document.getElementById('total-exports').textContent = data.total_exports || 0;
                 document.getElementById('auth-today').textContent = data.auth_today || 0;
-                document.getElementById('events-today').textContent = data.total_events_today || 0;
 
                 const now = new Date();
                 document.getElementById('updated').textContent =
@@ -596,7 +596,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         setInterval(loadStats, 10000);
 
         // Charts
-        function drawChart(canvasId, data, keys, colors, maxVal = 100) {
+        function drawChart(canvasId, data, keys, colors, maxVal = 100, unit = '%') {
             const canvas = document.getElementById(canvasId);
             if (!canvas || !data.length) return;
 
@@ -608,57 +608,105 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
             const w = rect.width;
             const h = rect.height;
-            const padding = { top: 10, right: 10, bottom: 10, left: 30 };
+            const padding = { top: 15, right: 15, bottom: 25, left: 45 };
             const chartW = w - padding.left - padding.right;
             const chartH = h - padding.top - padding.bottom;
 
             ctx.clearRect(0, 0, w, h);
 
-            // Grid lines
-            ctx.strokeStyle = '#2a2a3a';
-            ctx.lineWidth = 0.5;
+            // Background gradient
+            const bgGrad = ctx.createLinearGradient(0, padding.top, 0, h - padding.bottom);
+            bgGrad.addColorStop(0, 'rgba(99, 102, 241, 0.03)');
+            bgGrad.addColorStop(1, 'rgba(99, 102, 241, 0)');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(padding.left, padding.top, chartW, chartH);
+
+            // Grid lines with labels
+            ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+            ctx.lineWidth = 1;
+            ctx.fillStyle = '#71717a';
+            ctx.font = '10px -apple-system, system-ui, sans-serif';
+            ctx.textAlign = 'right';
+
             for (let i = 0; i <= 4; i++) {
                 const y = padding.top + (chartH / 4) * i;
                 ctx.beginPath();
                 ctx.moveTo(padding.left, y);
                 ctx.lineTo(w - padding.right, y);
                 ctx.stroke();
-            }
 
-            // Y-axis labels
-            ctx.fillStyle = '#71717a';
-            ctx.font = '9px system-ui';
-            ctx.textAlign = 'right';
-            for (let i = 0; i <= 4; i++) {
-                const y = padding.top + (chartH / 4) * i;
                 const val = Math.round(maxVal - (maxVal / 4) * i);
-                ctx.fillText(val, padding.left - 5, y + 3);
+                ctx.fillText(val + unit, padding.left - 8, y + 4);
             }
 
-            // Draw lines
+            // Time labels on X axis
+            if (data.length > 0) {
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#52525b';
+                const timePoints = [0, Math.floor(data.length / 2), data.length - 1];
+                timePoints.forEach(idx => {
+                    if (data[idx]) {
+                        const x = padding.left + (idx / (data.length - 1)) * chartW;
+                        const d = new Date(data[idx].timestamp);
+                        ctx.fillText(d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'}), x, h - 8);
+                    }
+                });
+            }
+
+            // Draw smooth lines with glow effect
             keys.forEach((key, ki) => {
-                ctx.strokeStyle = colors[ki];
-                ctx.lineWidth = 1.5;
+                const color = colors[ki];
+
+                // Glow effect
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 8;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
                 ctx.beginPath();
 
+                let lastX, lastY;
                 data.forEach((point, i) => {
-                    const x = padding.left + (i / (data.length - 1)) * chartW;
+                    const x = padding.left + (i / Math.max(data.length - 1, 1)) * chartW;
                     const val = Math.min(point[key] || 0, maxVal);
                     const y = padding.top + chartH - (val / maxVal) * chartH;
 
                     if (i === 0) ctx.moveTo(x, y);
                     else ctx.lineTo(x, y);
+                    lastX = x; lastY = y;
                 });
                 ctx.stroke();
+                ctx.shadowBlur = 0;
 
-                // Fill area under line
-                ctx.globalAlpha = 0.1;
-                ctx.lineTo(padding.left + chartW, padding.top + chartH);
-                ctx.lineTo(padding.left, padding.top + chartH);
-                ctx.closePath();
-                ctx.fillStyle = colors[ki];
-                ctx.fill();
-                ctx.globalAlpha = 1;
+                // Fill area under line with gradient
+                if (lastX !== undefined) {
+                    const grad = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+                    grad.addColorStop(0, color.replace(')', ', 0.25)').replace('rgb', 'rgba'));
+                    grad.addColorStop(1, color.replace(')', ', 0)').replace('rgb', 'rgba'));
+
+                    ctx.lineTo(lastX, padding.top + chartH);
+                    ctx.lineTo(padding.left, padding.top + chartH);
+                    ctx.closePath();
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                }
+
+                // Draw current value indicator (last point)
+                if (data.length > 0) {
+                    const lastPoint = data[data.length - 1];
+                    const val = Math.min(lastPoint[key] || 0, maxVal);
+                    const x = padding.left + chartW;
+                    const y = padding.top + chartH - (val / maxVal) * chartH;
+
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                    ctx.strokeStyle = '#1a1a24';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
             });
         }
 
@@ -674,11 +722,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 }
 
                 // CPU/Memory percent chart
-                drawChart('canvas-cpu-mem', data, ['cpu_percent', 'mem_percent'], ['#6366f1', '#22c55e'], 100);
+                drawChart('canvas-cpu-mem', data, ['cpu_percent', 'mem_percent'], ['rgb(99, 102, 241)', 'rgb(34, 197, 94)'], 100, '%');
 
                 // Memory GB chart
-                const maxMem = Math.max(...data.map(d => d.mem_used_gb || 0)) * 1.2 || 10;
-                drawChart('canvas-mem-gb', data, ['mem_used_gb'], ['#22c55e'], maxMem);
+                const maxMem = Math.ceil(Math.max(...data.map(d => d.mem_used_gb || 0)) * 1.2) || 10;
+                drawChart('canvas-mem-gb', data, ['mem_used_gb'], ['rgb(34, 197, 94)'], maxMem, 'GB');
 
                 // Time labels
                 if (data.length > 0) {
