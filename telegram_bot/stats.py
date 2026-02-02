@@ -29,12 +29,28 @@ def init_db():
                 user_id INTEGER PRIMARY KEY,
                 last_seen TEXT NOT NULL,
                 username TEXT,
-                email TEXT
+                email TEXT,
+                last_export_time TEXT,
+                last_export_success INTEGER,
+                last_export_errors TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
             CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
         """)
+        # Добавляем новые колонки если их нет (для совместимости)
+        try:
+            conn.execute("ALTER TABLE active_users ADD COLUMN last_export_time TEXT")
+        except:
+            pass
+        try:
+            conn.execute("ALTER TABLE active_users ADD COLUMN last_export_success INTEGER")
+        except:
+            pass
+        try:
+            conn.execute("ALTER TABLE active_users ADD COLUMN last_export_errors TEXT")
+        except:
+            pass
 
 
 @contextmanager
@@ -66,12 +82,33 @@ def update_active_user(user_id: int, username: str = None, email: str = None):
     try:
         with get_db() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO active_users (user_id, last_seen, username, email)
+                INSERT OR REPLACE INTO active_users (user_id, last_seen, username, email,
+                    last_export_time, last_export_success, last_export_errors)
                 VALUES (?, ?,
                     COALESCE(?, (SELECT username FROM active_users WHERE user_id = ?)),
-                    COALESCE(?, (SELECT email FROM active_users WHERE user_id = ?))
+                    COALESCE(?, (SELECT email FROM active_users WHERE user_id = ?)),
+                    (SELECT last_export_time FROM active_users WHERE user_id = ?),
+                    (SELECT last_export_success FROM active_users WHERE user_id = ?),
+                    (SELECT last_export_errors FROM active_users WHERE user_id = ?)
                 )
-            """, (user_id, datetime.now().isoformat(), username, user_id, email, user_id))
+            """, (user_id, datetime.now().isoformat(), username, user_id, email, user_id,
+                  user_id, user_id, user_id))
+    except Exception as e:
+        print(f"Stats error: {e}")
+
+
+def update_user_export(user_id: int, success: bool, errors: list = None):
+    """Update user's last export status"""
+    try:
+        with get_db() as conn:
+            errors_text = "; ".join(errors[:5]) if errors else None  # Max 5 errors
+            conn.execute("""
+                UPDATE active_users
+                SET last_export_time = ?,
+                    last_export_success = ?,
+                    last_export_errors = ?
+                WHERE user_id = ?
+            """, (datetime.now().isoformat(), 1 if success else 0, errors_text, user_id))
     except Exception as e:
         print(f"Stats error: {e}")
 
@@ -125,12 +162,12 @@ def get_stats() -> dict:
                 (today,)
             ).fetchone()[0]
 
-            # Recent active users list
+            # Recent active users list (all users, sorted by last_seen)
             recent_users = conn.execute("""
-                SELECT user_id, username, email, last_seen
+                SELECT user_id, username, email, last_seen,
+                       last_export_time, last_export_success, last_export_errors
                 FROM active_users
                 ORDER BY last_seen DESC
-                LIMIT 20
             """).fetchall()
 
             return {

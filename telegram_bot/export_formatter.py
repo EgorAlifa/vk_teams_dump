@@ -19,7 +19,8 @@ def format_as_html(data: dict) -> str:
     Мягкий голубой дизайн, CSS-переключение чатов, JS только для поиска
     """
 
-    chats = data.get("chats", [])
+    # Фильтруем чаты без сообщений
+    chats = [c for c in data.get("chats", []) if c.get("messages")]
     total_messages = sum(len(c.get("messages", [])) for c in chats)
     export_date = data.get("export_date", datetime.now().isoformat())[:10]
 
@@ -29,10 +30,30 @@ def format_as_html(data: dict) -> str:
 
     for idx, chat in enumerate(chats):
         chat_sn = chat.get("chat_sn", "")
-        chat_name = escape(chat.get("chat_name", chat_sn or "Чат"))
+        raw_chat_name = chat.get("chat_name", chat_sn or "Чат")
         messages = chat.get("messages", [])
         is_personal = "@chat.agent" not in chat_sn
         msg_count = len(messages)
+
+        # Для личных чатов: ищем имя собеседника и форматируем "Имя Фамилия (email)"
+        if is_personal and chat_sn and "@" in chat_sn:
+            friendly_name = None
+            # Ищем friendly имя в сообщениях от этого человека
+            for msg in messages:
+                sender_sn = msg.get("chat", {}).get("sender") or msg.get("senderSn") or ""
+                if sender_sn == chat_sn:
+                    fn = msg.get("senderNick") or msg.get("friendly") or ""
+                    # Проверяем что это настоящее имя, а не placeholder
+                    if fn and fn.strip() not in ("", "- -", "--", chat_sn):
+                        friendly_name = fn.strip()
+                        break
+
+            if friendly_name and friendly_name.lower() != chat_sn.lower():
+                chat_name = escape(f"{friendly_name} ({chat_sn})")
+            else:
+                chat_name = escape(chat_sn)
+        else:
+            chat_name = escape(raw_chat_name)
 
         # Последнее сообщение для превью
         last_msg = messages[-1] if messages else {}
@@ -509,10 +530,10 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,A
                 return;
             }}
             var res=[];
-            for(var i=0;i<msgIndex.length&&res.length<100;i++){{
+            for(var i=0;i<msgIndex.length;i++){{
                 if(msgIndex[i].text.toLowerCase().indexOf(q)>=0)res.push(msgIndex[i]);
             }}
-            stats.textContent='Сообщений: '+res.length+(res.length>=100?'+':'');
+            stats.textContent='Сообщений: '+res.length;
             if(!res.length){{
                 searchResults.innerHTML='<div style="padding:16px;text-align:center;color:var(--text2)">Ничего не найдено</div>';
                 return;
