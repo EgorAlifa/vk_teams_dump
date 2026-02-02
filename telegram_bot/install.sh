@@ -326,6 +326,25 @@ if [ ! -f ".env" ]; then
 
     echo "TG_BOT_TOKEN=$BOT_TOKEN" > .env
     echo -e "${GREEN}✓ Токен сохранён в .env${NC}"
+
+    # Настройка админа бота
+    echo ""
+    echo -e "${YELLOW}Настройка администратора бота${NC}"
+    echo -e "${YELLOW}Как узнать свой Telegram ID:${NC}"
+    echo "  1. Напиши боту @userinfobot или @getmyid_bot"
+    echo "  2. Он покажет твой ID (например: 123456789)"
+    echo ""
+    read -p "Введи свой Telegram ID (или Enter для пропуска): " ADMIN_ID
+
+    if [ -n "$ADMIN_ID" ]; then
+        echo "ADMIN_IDS=$ADMIN_ID" >> .env
+        echo -e "${GREEN}✓ Админ ID добавлен в .env${NC}"
+        echo -e "${YELLOW}Теперь тебе доступны команды:${NC}"
+        echo "  /maintenance    — уведомить всех о тех. работах"
+        echo "  /announce_update — уведомить об обновлениях бота"
+    else
+        echo -e "${YELLOW}Пропущено. Добавь позже в .env: ADMIN_IDS=твой_id${NC}"
+    fi
 fi
 
 #############################################
