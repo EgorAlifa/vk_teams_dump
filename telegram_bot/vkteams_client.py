@@ -635,21 +635,32 @@ class VKTeamsClient:
         """
         avatars = {}
         failed = []
+        delay = 0.2  # Start with 200ms delay (5 req/sec)
+        consecutive_failures = 0
 
         for i, sn in enumerate(sns, 1):
             try:
                 data = await self.get_avatar(sn, size)
                 if data:
                     avatars[sn] = data
+                    consecutive_failures = 0  # Reset on success
                     if i % 10 == 0:  # Log every 10 avatars
-                        logger.info(f"Avatar progress: {len(avatars)}/{i}")
+                        logger.info(f"Avatar progress: {len(avatars)}/{i} (delay: {delay:.2f}s)")
                 else:
                     failed.append(sn)
+                    consecutive_failures += 1
             except Exception as e:
                 failed.append(sn)
+                consecutive_failures += 1
                 logger.debug(f"Avatar error for {sn}: {e}")
 
-            await asyncio.sleep(0.05)  # Rate limit
+            # Adaptive rate limiting: increase delay if many failures
+            if consecutive_failures >= 5:
+                delay = min(delay * 1.5, 2.0)  # Max 2 seconds
+                logger.info(f"Rate limit detected, increasing delay to {delay:.2f}s")
+                consecutive_failures = 0
+
+            await asyncio.sleep(delay)
 
         logger.info(f"Downloaded {len(avatars)}/{len(sns)} avatars ({len(failed)} failed)")
         if failed and len(failed) <= 5:
