@@ -307,13 +307,17 @@ def get_stats() -> dict:
         return {"error": str(e)}
 
 
-def get_active_user_ids() -> list[int]:
-    """Get list of recently active user IDs (for shutdown notification)"""
+def get_active_user_ids(days: int = 7) -> list[int]:
+    """Get list of recently active user IDs (for broadcast/notification)
+
+    Args:
+        days: Number of days to look back (default 7)
+    """
     try:
-        hour_ago = (datetime.now() - timedelta(hours=1)).isoformat()
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT user_id FROM active_users WHERE last_seen >= ?", (hour_ago,)
+                "SELECT user_id FROM active_users WHERE last_seen >= ?", (cutoff,)
             ).fetchall()
             return [row[0] for row in rows]
     except Exception:
