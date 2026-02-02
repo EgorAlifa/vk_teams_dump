@@ -544,6 +544,76 @@ class VKTeamsClient:
             "messages": all_messages
         }
 
+    async def get_avatar(self, sn: str, size: str = "small") -> bytes | None:
+        """
+        Download avatar for a user or chat.
+
+        Args:
+            sn: User/chat identifier (email or chat@chat.agent)
+            size: Avatar size - "small" (64px), "medium" (128px), "large" (256px)
+
+        Returns:
+            Image bytes or None if not available
+        """
+        # VK Teams avatar URL pattern
+        size_map = {"small": "64", "medium": "128", "large": "256"}
+        px = size_map.get(size, "64")
+
+        # Try different avatar URL patterns
+        avatar_urls = [
+            f"https://files.myteam.vmailru.net/avatar/get?targetSn={sn}&size={px}x{px}",
+            f"https://u.myteam.vmailru.net/avatar/get?targetSn={sn}&size={px}x{px}",
+        ]
+
+        headers = {
+            "Accept": "image/*",
+            "Origin": "https://myteam.mail.ru",
+            "Referer": "https://myteam.mail.ru/",
+            "x-teams-aimsid": self.session.aimsid,
+        }
+
+        http = self._get_http_session()
+
+        for avatar_url in avatar_urls:
+            try:
+                async with http.get(avatar_url, headers=headers, timeout=10) as response:
+                    if response.status == 200 and response.content_type.startswith("image/"):
+                        data = await response.read()
+                        if len(data) > 100:  # Valid image (not empty/error)
+                            logger.debug(f"Got avatar for {sn}: {len(data)} bytes")
+                            return data
+            except Exception as e:
+                logger.debug(f"Avatar fetch failed for {sn}: {e}")
+                continue
+
+        return None
+
+    async def get_avatars_batch(self, sns: list[str], size: str = "small") -> dict[str, bytes]:
+        """
+        Download avatars for multiple users/chats.
+
+        Args:
+            sns: List of user/chat identifiers
+            size: Avatar size
+
+        Returns:
+            Dict mapping sn -> image bytes (only for successful downloads)
+        """
+        avatars = {}
+
+        for sn in sns:
+            try:
+                data = await self.get_avatar(sn, size)
+                if data:
+                    avatars[sn] = data
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.05)  # Rate limit
+
+        logger.info(f"Downloaded {len(avatars)}/{len(sns)} avatars")
+        return avatars
+
 
 # =========================
 # AUTH

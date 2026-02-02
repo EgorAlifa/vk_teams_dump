@@ -1,9 +1,10 @@
 """
 Форматирование экспорта VK Teams в различные форматы
-Современный дизайн 2025 - тёмная тема с тёплыми акцентами
+Современный дизайн 2025 - тёмная/светлая тема с тёплыми акцентами
 """
 
 import json
+import base64
 from datetime import datetime
 from html import escape
 
@@ -13,11 +14,16 @@ def format_as_json(data: dict) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def format_as_html(data: dict) -> str:
+def format_as_html(data: dict, avatars: dict = None) -> str:
     """
-    Форматирование в HTML - стиль VK Teams
-    Мягкий голубой дизайн, CSS-переключение чатов, JS только для поиска
+    Форматирование в HTML - современный дизайн 2025
+    Тёмная/светлая тема, CSS-переключение чатов, аватарки
+
+    Args:
+        data: Данные экспорта
+        avatars: Словарь {sn: bytes} с аватарками (опционально)
     """
+    avatars = avatars or {}
 
     # Фильтруем чаты без сообщений
     chats = [c for c in data.get("chats", []) if c.get("messages")]
@@ -94,6 +100,14 @@ def format_as_html(data: dict) -> str:
 
         avatar_letter = chat_name[0].upper() if chat_name else "?"
 
+        # Avatar: base64 image or letter
+        avatar_html = ""
+        if chat_sn in avatars:
+            avatar_b64 = base64.b64encode(avatars[chat_sn]).decode('ascii')
+            avatar_html = f'<img src="data:image/jpeg;base64,{avatar_b64}" alt="">'
+        else:
+            avatar_html = avatar_letter
+
         # Собираем участников
         chat_members = {}
         for msg in messages:
@@ -145,7 +159,7 @@ def format_as_html(data: dict) -> str:
         sidebar_items += f'''
 <input type="radio" name="chat" id="c{idx}" class="chat-radio" {checked}>
 <label for="c{idx}" class="chat-item" data-idx="{idx}">
-    <div class="avatar">{avatar_letter}</div>
+    <div class="avatar">{avatar_html}</div>
     <div class="chat-info">
         <div class="chat-name">{chat_name[:30]}{"…" if len(chat_name) > 30 else ""}</div>
         <div class="chat-preview">{preview}</div>
@@ -161,7 +175,7 @@ def format_as_html(data: dict) -> str:
 <div class="chat-panel" id="p{idx}">
     <div class="panel-header">
         <label for="closeChat" class="back-btn">‹</label>
-        <div class="avatar sm">{avatar_letter}</div>
+        <div class="avatar sm">{avatar_html}</div>
         <div class="header-info">
             <div class="header-name">{chat_name}</div>
             <div class="header-sub">{msg_count} сообщений</div>
@@ -192,6 +206,7 @@ def format_as_html(data: dict) -> str:
 <title>VK Teams Export</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
+/* Dark theme (default) */
 :root{{
     --bg:#0f0f12;
     --bg2:#16161b;
@@ -218,8 +233,39 @@ def format_as_html(data: dict) -> str:
     --radius:12px;
     --radius-lg:16px;
 }}
+/* Light theme */
+.light{{
+    --bg:#f5f5f7;
+    --bg2:#ffffff;
+    --card:#ffffff;
+    --card2:#f0f0f2;
+    --accent:#059669;
+    --accent2:#10b981;
+    --accent-bg:rgba(5,150,105,0.1);
+    --text:#1a1a1a;
+    --text2:#52525b;
+    --text3:#71717a;
+    --border:#e4e4e7;
+    --border2:#d4d4d8;
+    --hover:#f4f4f5;
+    --msg-out:#d1fae5;
+    --msg-in:#ffffff;
+    --hl:rgba(5,150,105,0.15);
+    --shadow:0 1px 3px rgba(0,0,0,0.08);
+    --shadow-lg:0 4px 12px rgba(0,0,0,0.1);
+}}
 html,body{{height:100%;overflow:hidden}}
-body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}}
+body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;transition:background 0.3s,color 0.3s}}
+
+/* Theme toggle */
+.theme-toggle{{
+    position:fixed;bottom:20px;right:20px;z-index:1000;
+    width:48px;height:48px;border-radius:50%;
+    background:var(--card);border:1px solid var(--border);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+    box-shadow:var(--shadow-lg);transition:all 0.2s;font-size:20px
+}}
+.theme-toggle:hover{{transform:scale(1.1);border-color:var(--accent)}}
 
 .app{{display:flex;height:100%;max-width:1400px;margin:0 auto;background:var(--card);box-shadow:var(--shadow-lg);border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border)}}
 
@@ -267,8 +313,9 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
     background:linear-gradient(135deg,var(--purple),var(--pink));color:#fff;
     display:flex;align-items:center;justify-content:center;
     font-size:18px;font-weight:700;flex-shrink:0;
-    box-shadow:var(--shadow)
+    box-shadow:var(--shadow);overflow:hidden
 }}
+.avatar img{{width:100%;height:100%;object-fit:cover}}
 .avatar.sm{{width:36px;height:36px;font-size:14px;border-radius:10px}}
 /* Avatar color variants */
 .chat-item:nth-child(3n+1) .avatar{{background:linear-gradient(135deg,var(--accent),#059669)}}
@@ -497,6 +544,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
 </head>
 <body>
 
+<button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему">🌙</button>
+
 <div class="app">
     {sidebar_items}
 
@@ -524,6 +573,22 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
 </div>
 
 <script>
+// Theme toggle
+function toggleTheme(){{
+    var body=document.body;
+    var btn=document.querySelector('.theme-toggle');
+    body.classList.toggle('light');
+    btn.textContent=body.classList.contains('light')?'🌙':'☀️';
+    localStorage.setItem('theme',body.classList.contains('light')?'light':'dark');
+}}
+// Restore saved theme
+(function(){{
+    if(localStorage.getItem('theme')==='light'){{
+        document.body.classList.add('light');
+        document.querySelector('.theme-toggle').textContent='🌙';
+    }}
+}})();
+
 (function(){{
     var chatItems=document.querySelectorAll('.chat-item');
     var chatList=document.getElementById('chatList');
