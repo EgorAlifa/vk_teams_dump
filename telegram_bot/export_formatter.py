@@ -507,12 +507,12 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
 .pinned-list{{padding:12px;max-height:200px;overflow-y:auto;border-top:1px solid var(--border)}}
 
 /* Messages */
-.messages{{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:8px}}
+.messages{{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:8px;position:relative}}
 .messages::-webkit-scrollbar{{width:6px}}
 .messages::-webkit-scrollbar-track{{background:transparent}}
 .messages::-webkit-scrollbar-thumb{{background:var(--border2);border-radius:3px}}
-.date-sep{{text-align:center;margin:20px 0}}
-.date-sep span{{background:var(--card2);padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;color:var(--text2)}}
+.date-sep{{text-align:center;margin:20px 0;position:sticky;top:0;z-index:3;padding:8px 0;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}}
+.date-sep span{{background:var(--card2);padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;color:var(--text2);box-shadow:0 2px 8px rgba(0,0,0,0.1)}}
 
 .msg{{
     max-width:70%;padding:12px 16px;border-radius:18px;
@@ -617,19 +617,39 @@ function toggleTheme(){{
     var currentTab='chats';
     var isMobile=window.innerWidth<=768;
 
+    // Scroll chat to bottom (latest messages)
+    function scrollChatToBottom(panelId){{
+        setTimeout(function(){{
+            var panel=document.getElementById(panelId);
+            if(!panel)return;
+            var messagesContainer=panel.querySelector('.messages');
+            if(messagesContainer){{
+                messagesContainer.scrollTop=messagesContainer.scrollHeight;
+            }}
+        }},50);
+    }}
+
     // Mobile: open chat panel
     function openChatMobile(idx){{
         if(!isMobile)return;
         // Hide all panels, show selected one
         document.querySelectorAll('.chat-panel').forEach(function(p){{p.classList.remove('mobile-active')}});
         var panel=document.getElementById('p'+idx);
-        if(panel)panel.classList.add('mobile-active');
+        if(panel){{
+            panel.classList.add('mobile-active');
+            scrollChatToBottom('p'+idx);
+        }}
         document.getElementById('sidebar').classList.add('hidden');
         document.getElementById('main').classList.add('active');
     }}
 
     // Move chat items to chat-list
     chatItems.forEach(function(item){{chatList.appendChild(item)}});
+
+    // Scroll first chat to bottom on page load
+    if(!isMobile){{
+        scrollChatToBottom('p0');
+    }}
 
     // Index messages for search
     var msgIndex=[];
@@ -725,7 +745,12 @@ function toggleTheme(){{
     chatItems.forEach(function(item){{
         item.addEventListener('click',function(){{
             var idx=item.getAttribute('data-idx');
-            openChatMobile(idx);
+            if(isMobile){{
+                openChatMobile(idx);
+            }}else{{
+                // Desktop: scroll to bottom when chat is opened
+                scrollChatToBottom('p'+idx);
+            }}
         }});
     }});
 

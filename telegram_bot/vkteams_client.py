@@ -582,8 +582,6 @@ class VKTeamsClient:
         for avatar_url in avatar_urls:
             try:
                 async with http.get(avatar_url, headers=headers, timeout=10) as response:
-                    logger.debug(f"Avatar response for {sn}: status={response.status}, type={response.content_type}")
-
                     if response.status == 200:
                         data = await response.read()
 
@@ -596,20 +594,30 @@ class VKTeamsClient:
                                     b64_data = data_str.split(';base64,')[1]
                                     import base64
                                     data = base64.b64decode(b64_data)
-                                    logger.debug(f"Got avatar (base64) for {sn}: {len(data)} bytes")
                                     return data
-                            except Exception as e:
-                                logger.debug(f"Base64 parse error for {sn}: {e}")
+                            except Exception:
+                                pass
 
-                        # Direct image data
-                        if data and len(data) > 100:
-                            # Check if it's actually an image
-                            if data[:4] in (b'\x89PNG', b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'GIF8'):
-                                logger.debug(f"Got avatar (binary) for {sn}: {len(data)} bytes")
+                        # Direct image data - accept smaller images too (profile pics can be small)
+                        if data and len(data) > 50:
+                            # Check if it's actually an image (PNG, JPEG, GIF, WebP)
+                            if (data[:4] in (b'\x89PNG', b'GIF8') or
+                                data[:3] == b'\xff\xd8\xff' or  # JPEG
+                                data[:4] == b'RIFF'):           # WebP
+                                return data
+                            # Also accept if content-type says it's an image
+                            elif response.content_type and 'image' in response.content_type:
                                 return data
 
+                    elif response.status == 404:
+                        # User has no avatar - this is OK, not an error
+                        return None
+
+            except asyncio.TimeoutError:
+                logger.debug(f"Avatar timeout for {sn}")
+                continue
             except Exception as e:
-                logger.debug(f"Avatar fetch failed for {sn}: {e}")
+                logger.debug(f"Avatar error for {sn}: {e}")
                 continue
 
         return None
@@ -626,18 +634,26 @@ class VKTeamsClient:
             Dict mapping sn -> image bytes (only for successful downloads)
         """
         avatars = {}
+        failed = []
 
-        for sn in sns:
+        for i, sn in enumerate(sns, 1):
             try:
                 data = await self.get_avatar(sn, size)
                 if data:
                     avatars[sn] = data
-            except Exception:
-                pass
+                    if i % 10 == 0:  # Log every 10 avatars
+                        logger.info(f"Avatar progress: {len(avatars)}/{i}")
+                else:
+                    failed.append(sn)
+            except Exception as e:
+                failed.append(sn)
+                logger.debug(f"Avatar error for {sn}: {e}")
 
             await asyncio.sleep(0.05)  # Rate limit
 
-        logger.info(f"Downloaded {len(avatars)}/{len(sns)} avatars")
+        logger.info(f"Downloaded {len(avatars)}/{len(sns)} avatars ({len(failed)} failed)")
+        if failed and len(failed) <= 5:
+            logger.info(f"Failed avatars: {', '.join(failed)}")
         return avatars
 
 
