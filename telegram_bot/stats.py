@@ -182,7 +182,8 @@ def update_user_export(user_id: int, success: bool, errors: list = None):
     """Update user's last export status"""
     try:
         with get_db() as conn:
-            errors_text = "; ".join(errors[:5]) if errors else None  # Max 5 errors
+            # Join all errors with newlines for better readability in dashboard
+            errors_text = "\n".join(errors[:10]) if errors else None  # Max 10 errors
             conn.execute("""
                 UPDATE active_users
                 SET last_export_time = ?,
