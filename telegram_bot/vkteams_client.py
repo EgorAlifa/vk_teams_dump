@@ -582,8 +582,11 @@ class VKTeamsClient:
         for avatar_url in avatar_urls:
             try:
                 async with http.get(avatar_url, headers=headers, timeout=10) as response:
+                    logger.debug(f"Avatar for {sn}: status={response.status}, content-type={response.content_type}")
+
                     if response.status == 200:
                         data = await response.read()
+                        logger.debug(f"Avatar for {sn}: received {len(data)} bytes")
 
                         # Check if response is base64 data URL
                         if data and data.startswith(b'data:image/'):
@@ -594,24 +597,37 @@ class VKTeamsClient:
                                     b64_data = data_str.split(';base64,')[1]
                                     import base64
                                     data = base64.b64decode(b64_data)
+                                    logger.debug(f"Avatar for {sn}: decoded base64, {len(data)} bytes")
                                     return data
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"Avatar for {sn}: base64 decode error: {e}")
                                 pass
 
                         # Direct image data - accept smaller images too (profile pics can be small)
                         if data and len(data) > 50:
                             # Check if it's actually an image (PNG, JPEG, GIF, WebP)
+                            sig = data[:4] if len(data) >= 4 else data
+                            logger.debug(f"Avatar for {sn}: checking signature: {sig.hex()}")
+
                             if (data[:4] in (b'\x89PNG', b'GIF8') or
                                 data[:3] == b'\xff\xd8\xff' or  # JPEG
                                 data[:4] == b'RIFF'):           # WebP
+                                logger.debug(f"Avatar for {sn}: valid image signature found")
                                 return data
                             # Also accept if content-type says it's an image
                             elif response.content_type and 'image' in response.content_type:
+                                logger.debug(f"Avatar for {sn}: accepted by content-type: {response.content_type}")
                                 return data
+                            else:
+                                logger.debug(f"Avatar for {sn}: invalid signature and content-type={response.content_type}")
+                        else:
+                            logger.debug(f"Avatar for {sn}: data too small or empty (size={len(data) if data else 0})")
 
                     elif response.status == 404:
-                        # User has no avatar - this is OK, not an error
+                        logger.debug(f"Avatar for {sn}: 404 - no avatar")
                         return None
+                    else:
+                        logger.debug(f"Avatar for {sn}: unexpected status {response.status}")
 
             except asyncio.TimeoutError:
                 logger.debug(f"Avatar timeout for {sn}")
@@ -620,6 +636,7 @@ class VKTeamsClient:
                 logger.debug(f"Avatar error for {sn}: {e}")
                 continue
 
+        logger.debug(f"Avatar for {sn}: all attempts failed, returning None")
         return None
 
     async def get_avatars_batch(self, sns: list[str], size: str = "small") -> dict[str, bytes]:
