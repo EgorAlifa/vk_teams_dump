@@ -989,6 +989,35 @@ async def do_export(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
+    # Спрашиваем про аватарки (только для HTML)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ С аватарками", callback_data="avatars:yes")
+    builder.button(text="❌ Без аватарок (быстрее)", callback_data="avatars:no")
+    builder.adjust(1)
+
+    await safe_edit_text(
+        callback.message,
+        f"📥 <b>Экспорт {len(selected)} чатов</b>\n\n"
+        f"Загружать аватарки чатов?\n\n"
+        f"<i>• С аватарками: HTML будет красивее, но экспорт медленнее\n"
+        f"• Без аватарок: экспорт быстрее, аватарки можно загрузить позже</i>",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("avatars:"))
+async def ask_export_format(callback: CallbackQuery, state: FSMContext):
+    """Спросить формат экспорта после выбора аватарок"""
+    avatars_choice = callback.data.split(":")[1]  # yes или no
+    user_id = callback.from_user.id
+    selected = user_selected_chats.get(user_id, [])
+
+    # Сохраняем выбор в state
+    await state.update_data(with_avatars=(avatars_choice == "yes"))
+
+    await callback.answer()
+
     # Спрашиваем формат
     builder = InlineKeyboardBuilder()
     builder.button(text="📄 JSON (данные)", callback_data="format:json")
@@ -996,9 +1025,10 @@ async def do_export(callback: CallbackQuery, state: FSMContext):
     builder.button(text="📦 Оба формата", callback_data="format:both")
     builder.adjust(1)
 
+    avatars_text = "с аватарками" if avatars_choice == "yes" else "без аватарок"
     await safe_edit_text(
         callback.message,
-        f"📥 <b>Экспорт {len(selected)} чатов</b>\n\n"
+        f"📥 <b>Экспорт {len(selected)} чатов</b> ({avatars_text})\n\n"
         f"Выберите формат:",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
@@ -1045,8 +1075,9 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     # Получаем данные о чатах заранее
     state_data = await state.get_data()
     all_chats = state_data.get("contacts", [])
+    with_avatars = state_data.get("with_avatars", True)  # По умолчанию с аватарками для обратной совместимости
 
-    # Фоновая задача для загрузки аватарок (только для HTML)
+    # Фоновая задача для загрузки аватарок (только для HTML и если пользователь выбрал)
     async def avatar_downloader(queue, avatars_dict):
         """Асинхронная загрузка аватарок с умным rate limiting"""
         downloaded = 0
@@ -1068,13 +1099,13 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     pass  # Аватарки не критичны
 
                 # Пауза для избежания rate limit
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.5)
 
             queue.task_done()
 
     avatar_queue = asyncio.Queue()
     avatar_task = None
-    if format_type in ("html", "both"):
+    if format_type in ("html", "both") and with_avatars:
         avatar_task = asyncio.create_task(avatar_downloader(avatar_queue, avatars))
         print("📷 Started background avatar downloader")
 
@@ -1090,8 +1121,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 if chat_info.get("is_blocked"):
                     chat_name = f"🚫 {chat_name}"
 
-                # Обновляем статус только каждые 10 чатов или на последнем
-                if (i + 1) % 10 == 0 or i == total - 1:
+                # Обновляем статус только каждые 5 чатов или на последнем
+                if (i + 1) % 5 == 0 or i == total - 1:
                     await safe_edit_text(
                         status_msg,
                         f"⏳ <b>Экспорт чатов</b>\n\n"
@@ -1129,11 +1160,33 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     if avatar_task:
         # Отправляем сигнал завершения
         await avatar_queue.put(None)
-        # Ждём завершения загрузки (максимум 60 секунд)
+        # Ждём завершения загрузки (максимум 60 секунд) с отображением прогресса
         try:
             print(f"📷 Waiting for background avatar download to complete...")
-            await asyncio.wait_for(avatar_task, timeout=60)
-            print(f"📷 Background download complete: {len(avatars)} avatars total")
+            total_avatars_to_download = len(all_exports)
+            max_wait_time = 60
+            start_wait = asyncio.get_event_loop().time()
+
+            while not avatar_task.done() and (asyncio.get_event_loop().time() - start_wait) < max_wait_time:
+                current_downloaded = len(avatars)
+                await safe_edit_text(
+                    status_msg,
+                    f"📷 <b>Загрузка аватарок</b>\n\n"
+                    f"{make_progress_bar(current_downloaded, total_avatars_to_download)}\n\n"
+                    f"Загружено: {current_downloaded} из {total_avatars_to_download}",
+                    parse_mode="HTML"
+                )
+                # Ждем 2 секунды перед следующей проверкой
+                try:
+                    await asyncio.wait_for(avatar_task, timeout=2.0)
+                    break  # Задача завершена
+                except asyncio.TimeoutError:
+                    continue  # Продолжаем ждать
+
+            if avatar_task.done():
+                print(f"📷 Background download complete: {len(avatars)} avatars total")
+            else:
+                print(f"📷 Avatar download timeout (got {len(avatars)} avatars)")
         except asyncio.TimeoutError:
             print(f"📷 Avatar download timeout (got {len(avatars)} avatars)")
 
