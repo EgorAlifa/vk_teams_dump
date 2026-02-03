@@ -626,6 +626,13 @@ class VKTeamsClient:
                     elif response.status == 404:
                         logger.debug(f"Avatar for {sn}: 404 - no avatar")
                         return None
+                    elif response.status == 400:
+                        # Bad request - log the response body for debugging
+                        try:
+                            error_data = await response.read()
+                            logger.info(f"Avatar for {sn}: 400 Bad Request - {error_data.decode('utf-8', errors='ignore')[:200]}")
+                        except:
+                            logger.info(f"Avatar for {sn}: 400 Bad Request (could not read response)")
                     else:
                         logger.debug(f"Avatar for {sn}: unexpected status {response.status}")
 
