@@ -27,7 +27,7 @@ from aiogram.types import (
     BotCommandScopeChat,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 
 import config
 from vkteams_client import VKTeamsClient, VKTeamsAuth, VKTeamsSession
@@ -70,6 +70,10 @@ user_exporting: dict[int, bool] = {}  # Блокировка повторных 
 user_search_query: dict[int, str] = {}  # Поисковый запрос
 user_message_ids: dict[int, dict] = {}  # ID сообщений для удаления (code_msg, chats_msg)
 
+# Throttling для обновления статус-сообщений (чтобы не попасть в flood control)
+last_status_update: dict[int, float] = {}
+STATUS_UPDATE_INTERVAL = 2.0  # Минимум 2 секунды между обновлениями
+
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     """Создать текстовый прогресс-бар"""
@@ -81,13 +85,29 @@ def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     return f"{bar} {current}/{total} ({int(percent * 100)}%)"
 
 
-async def safe_edit_text(message, text: str, **kwargs):
-    """Safely edit message, ignoring 'message not modified' error"""
+async def safe_edit_text(message, text: str, throttle: bool = True, **kwargs):
+    """Safely edit message with throttling to avoid flood control"""
+    import time
+
+    # Throttling: не обновлять чаще чем STATUS_UPDATE_INTERVAL секунд
+    if throttle:
+        msg_id = message.message_id
+        now = time.time()
+        if msg_id in last_status_update:
+            elapsed = now - last_status_update[msg_id]
+            if elapsed < STATUS_UPDATE_INTERVAL:
+                return  # Пропускаем обновление
+        last_status_update[msg_id] = now
+
     try:
         await message.edit_text(text, **kwargs)
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e):
             raise
+    except TelegramRetryAfter as e:
+        # Flood control - пропускаем обновление
+        print(f"⚠️ Telegram flood control: retry after {e.retry_after}s, skipping update")
+        pass
 
 
 async def safe_edit_reply_markup(message, **kwargs):
@@ -1172,7 +1192,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 print(f"👤 Loaded contact names: {len(names)} entries")
                 print(f"📷 Total avatars collected: {len(avatars)}")
 
-                # Статус: генерация HTML
+                # Статус: генерация HTML (критично - не throttle)
                 await safe_edit_text(
                     status_msg,
                     f"⏳ <b>Генерация HTML...</b>\n\n"
@@ -1181,7 +1201,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     f"📷 Аватарок: {len(avatars)}\n"
                     f"👤 Контактов: {len(names)}\n\n"
                     f"Это может занять время для больших экспортов",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    throttle=False
                 )
 
                 try:
@@ -1212,7 +1233,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
             # Проверяем размер ZIP
             zip_size_mb = os.path.getsize(zip_path) / (1024 * 1024)
 
-            # Отправляем файл
+            # Отправляем файл (критично - не throttle)
             status_text = "✅ <b>Экспорт завершён!</b>" if not critical_error else "⚠️ <b>Экспорт завершён с ошибками</b>"
             await safe_edit_text(
                 status_msg,
@@ -1220,7 +1241,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 f"📊 Чатов: {len(all_exports)}\n"
                 f"📦 Размер архива: {zip_size_mb:.1f} MB\n"
                 f"📨 Отправляю файл...",
-                parse_mode="HTML"
+                parse_mode="HTML",
+                throttle=False
             )
 
             if zip_size_mb > 50:
