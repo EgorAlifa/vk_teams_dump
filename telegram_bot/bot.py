@@ -1067,30 +1067,18 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 export_data = await client.export_chat(sn)
                 all_exports.append(export_data)
 
-                # Скачиваем аватарки для участников этого чата
+                # Скачиваем аватарку чата (только для HTML экспорта)
                 if format_type in ("html", "both"):
-                    chat_sns = set()
-                    # Добавляем сам чат
-                    if export_data.get("chat_sn"):
-                        chat_sns.add(export_data["chat_sn"])
-                    # Добавляем всех участников из сообщений
-                    for msg in export_data.get("messages", []):
-                        sender_sn = (
-                            msg.get("chat", {}).get("sender") or
-                            msg.get("senderSn") or
-                            msg.get("sn") or
-                            msg.get("sender") or
-                            ""
-                        )
-                        if sender_sn:
-                            chat_sns.add(sender_sn)
-
-                    # Скачиваем только новые аватарки (которых еще нет)
-                    new_sns = [s for s in chat_sns if s not in avatars]
-                    if new_sns:
-                        new_avatars = await client.get_avatars_batch(new_sns, size="small")
-                        avatars.update(new_avatars)
-                        print(f"📷 Chat {i+1}/{total}: downloaded {len(new_avatars)} new avatars (total: {len(avatars)})")
+                    chat_sn = export_data.get("chat_sn")
+                    # Скачиваем только если это новая аватарка
+                    if chat_sn and chat_sn not in avatars:
+                        try:
+                            avatar_data = await client.get_avatar(chat_sn, size="small")
+                            if avatar_data:
+                                avatars[chat_sn] = avatar_data
+                                print(f"📷 Chat {i+1}/{total}: downloaded chat avatar (total: {len(avatars)})")
+                        except Exception as e:
+                            print(f"⚠️ Failed to download avatar for {chat_sn}: {e}")
 
                 # Небольшая пауза между чатами
                 await asyncio.sleep(0.3)
