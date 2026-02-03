@@ -1107,13 +1107,16 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 if chat_info.get("is_blocked"):
                     chat_name = f"🚫 {chat_name}"
 
-                await safe_edit_text(
-                    status_msg,
-                    f"⏳ <b>Экспорт чатов</b>\n\n"
-                    f"{make_progress_bar(i + 1, total)}\n\n"
-                    f"📥 {chat_name}",
-                    parse_mode="HTML"
-                )
+                # Обновляем статус только каждые 10 чатов или на последнем
+                if (i + 1) % 10 == 0 or i == total - 1:
+                    await safe_edit_text(
+                        status_msg,
+                        f"⏳ <b>Экспорт чатов</b>\n\n"
+                        f"{make_progress_bar(i + 1, total)}\n\n"
+                        f"📥 {chat_name}",
+                        parse_mode="HTML",
+                        throttle=False  # Обновляем редко, throttling не нужен
+                    )
 
                 # Экспортируем чат
                 export_data = await client.export_chat(sn)
