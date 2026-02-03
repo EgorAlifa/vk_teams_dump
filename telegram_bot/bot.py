@@ -1077,6 +1077,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                             if avatar_data:
                                 avatars[chat_sn] = avatar_data
                                 print(f"📷 Chat {i+1}/{total}: downloaded chat avatar (total: {len(avatars)})")
+                                # Дополнительная пауза после аватарки для rate limit
+                                await asyncio.sleep(0.5)
                         except Exception as e:
                             print(f"⚠️ Failed to download avatar for {chat_sn}: {e}")
 
