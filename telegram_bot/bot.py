@@ -27,7 +27,7 @@ from aiogram.types import (
     BotCommandScopeChat,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 
 import config
 from vkteams_client import VKTeamsClient, VKTeamsAuth, VKTeamsSession
@@ -81,16 +81,16 @@ def make_progress_bar(current: int, total: int, width: int = 20) -> str:
 
 
 async def safe_edit_text(message, text: str, **kwargs):
-    """Safely edit message text, ignoring 'message not modified' and flood control errors"""
+    """Safely edit message text, ignoring transient Telegram errors"""
     try:
         await message.edit_text(text, **kwargs)
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e):
             raise
     except TelegramRetryAfter as e:
-        # Flood control - пропускаем обновление
         print(f"⚠️ Telegram flood control: retry after {e.retry_after}s, skipping update")
-        pass
+    except TelegramServerError as e:
+        print(f"⚠️ Telegram server error: {e}, skipping update")
 
 
 async def safe_edit_reply_markup(message, **kwargs):
@@ -1099,7 +1099,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     pass  # Аватарки не критичны
 
                 # Пауза для избежания rate limit
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.8)
 
             queue.task_done()
 
@@ -1161,33 +1161,26 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         # Отправляем сигнал завершения
         await avatar_queue.put(None)
         # Ждём завершения загрузки (максимум 60 секунд) с отображением прогресса
-        try:
-            print(f"📷 Waiting for background avatar download to complete...")
-            total_avatars_to_download = len(all_exports)
-            max_wait_time = 60
-            start_wait = asyncio.get_event_loop().time()
+        print(f"📷 Waiting for background avatar download to complete...")
+        total_avatars_to_download = len(all_exports)
+        loop = asyncio.get_running_loop()
+        start_wait = loop.time()
 
-            while not avatar_task.done() and (asyncio.get_event_loop().time() - start_wait) < max_wait_time:
-                current_downloaded = len(avatars)
-                await safe_edit_text(
-                    status_msg,
-                    f"📷 <b>Загрузка аватарок</b>\n\n"
-                    f"{make_progress_bar(current_downloaded, total_avatars_to_download)}\n\n"
-                    f"Загружено: {current_downloaded} из {total_avatars_to_download}",
-                    parse_mode="HTML"
-                )
-                # Ждем 2 секунды перед следующей проверкой
-                try:
-                    await asyncio.wait_for(avatar_task, timeout=2.0)
-                    break  # Задача завершена
-                except asyncio.TimeoutError:
-                    continue  # Продолжаем ждать
+        while not avatar_task.done() and (loop.time() - start_wait) < 60:
+            current_downloaded = len(avatars)
+            await safe_edit_text(
+                status_msg,
+                f"📷 <b>Загрузка аватарок</b>\n\n"
+                f"{make_progress_bar(current_downloaded, total_avatars_to_download)}\n\n"
+                f"Загружено: {current_downloaded} из {total_avatars_to_download}",
+                parse_mode="HTML"
+            )
+            await asyncio.sleep(2.0)
 
-            if avatar_task.done():
-                print(f"📷 Background download complete: {len(avatars)} avatars total")
-            else:
-                print(f"📷 Avatar download timeout (got {len(avatars)} avatars)")
-        except asyncio.TimeoutError:
+        if avatar_task.done():
+            print(f"📷 Background download complete: {len(avatars)} avatars total")
+        else:
+            avatar_task.cancel()
             print(f"📷 Avatar download timeout (got {len(avatars)} avatars)")
 
     # Считаем общее количество сообщений
