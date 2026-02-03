@@ -1043,6 +1043,38 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     all_chats = state_data.get("contacts", [])
 
+    # Фоновая задача для загрузки аватарок (только для HTML)
+    async def avatar_downloader(queue, avatars_dict):
+        """Асинхронная загрузка аватарок с умным rate limiting"""
+        downloaded = 0
+        while True:
+            chat_sn = await queue.get()
+            if chat_sn is None:  # Сигнал завершения
+                queue.task_done()
+                break
+
+            if chat_sn not in avatars_dict:
+                try:
+                    avatar_data = await client.get_avatar(chat_sn, size="small")
+                    if avatar_data:
+                        avatars_dict[chat_sn] = avatar_data
+                        downloaded += 1
+                        if downloaded % 10 == 0:
+                            print(f"📷 Background: downloaded {downloaded} avatars (total: {len(avatars_dict)})")
+                except Exception as e:
+                    pass  # Аватарки не критичны
+
+                # Пауза для избежания rate limit
+                await asyncio.sleep(0.8)
+
+            queue.task_done()
+
+    avatar_queue = asyncio.Queue()
+    avatar_task = None
+    if format_type in ("html", "both"):
+        avatar_task = asyncio.create_task(avatar_downloader(avatar_queue, avatars))
+        print("📷 Started background avatar downloader")
+
     try:
         for i, sn in enumerate(selected):
             try:
@@ -1067,18 +1099,9 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 export_data = await client.export_chat(sn)
                 all_exports.append(export_data)
 
-                # Скачиваем аватарку чата (только для HTML экспорта)
-                if format_type in ("html", "both"):
-                    chat_sn = export_data.get("chat_sn")
-                    # Скачиваем только если это новая аватарка
-                    if chat_sn and chat_sn not in avatars:
-                        try:
-                            avatar_data = await client.get_avatar(chat_sn, size="small")
-                            if avatar_data:
-                                avatars[chat_sn] = avatar_data
-                                print(f"📷 Chat {i+1}/{total}: downloaded chat avatar (total: {len(avatars)})")
-                        except Exception as e:
-                            print(f"⚠️ Failed to download avatar for {chat_sn}: {e}")
+                # Добавляем аватарку в очередь на фоновую загрузку
+                if avatar_task and export_data.get("chat_sn"):
+                    await avatar_queue.put(export_data["chat_sn"])
 
                 # Небольшая пауза между чатами
                 await asyncio.sleep(0.3)
@@ -1096,6 +1119,18 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         critical_error = str(e)
+
+    # Завершаем фоновую загрузку аватарок
+    if avatar_task:
+        # Отправляем сигнал завершения
+        await avatar_queue.put(None)
+        # Ждём завершения загрузки (максимум 60 секунд)
+        try:
+            print(f"📷 Waiting for background avatar download to complete...")
+            await asyncio.wait_for(avatar_task, timeout=60)
+            print(f"📷 Background download complete: {len(avatars)} avatars total")
+        except asyncio.TimeoutError:
+            print(f"📷 Avatar download timeout (got {len(avatars)} avatars)")
 
     # Считаем общее количество сообщений
     total_msgs = sum(e.get('total_messages', 0) for e in all_exports)
