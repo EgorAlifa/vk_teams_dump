@@ -1314,6 +1314,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                             zip_path = os.path.join(export_dir, "_files.zip")
                             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
                                 for fname in sorted(os.listdir(export_dir)):
+                                    if fname == "_files.zip":
+                                        continue
                                     zf.write(os.path.join(export_dir, fname), fname)
                             files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
                             files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
