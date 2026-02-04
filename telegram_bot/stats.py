@@ -132,6 +132,10 @@ def init_db():
             conn.execute("ALTER TABLE active_users ADD COLUMN last_export_errors TEXT")
         except:
             pass
+        try:
+            conn.execute("ALTER TABLE active_users ADD COLUMN files_disabled INTEGER DEFAULT 0")
+        except:
+            pass
 
 
 @contextmanager
@@ -164,16 +168,17 @@ def update_active_user(user_id: int, username: str = None, email: str = None):
         with get_db() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO active_users (user_id, last_seen, username, email,
-                    last_export_time, last_export_success, last_export_errors)
+                    last_export_time, last_export_success, last_export_errors, files_disabled)
                 VALUES (?, ?,
                     COALESCE(?, (SELECT username FROM active_users WHERE user_id = ?)),
                     COALESCE(?, (SELECT email FROM active_users WHERE user_id = ?)),
                     (SELECT last_export_time FROM active_users WHERE user_id = ?),
                     (SELECT last_export_success FROM active_users WHERE user_id = ?),
-                    (SELECT last_export_errors FROM active_users WHERE user_id = ?)
+                    (SELECT last_export_errors FROM active_users WHERE user_id = ?),
+                    COALESCE((SELECT files_disabled FROM active_users WHERE user_id = ?), 0)
                 )
             """, (user_id, datetime.now().isoformat(), username, user_id, email, user_id,
-                  user_id, user_id, user_id))
+                  user_id, user_id, user_id, user_id))
     except Exception as e:
         print(f"Stats error: {e}")
 
@@ -293,7 +298,7 @@ def get_stats() -> dict:
             # Recent active users list (all users, sorted by last_seen)
             recent_users = conn.execute("""
                 SELECT user_id, username, email, last_seen,
-                       last_export_time, last_export_success, last_export_errors
+                       last_export_time, last_export_success, last_export_errors, files_disabled
                 FROM active_users
                 ORDER BY last_seen DESC
             """).fetchall()
@@ -328,6 +333,45 @@ def get_active_user_ids(days: int = 30) -> list[int]:
                 "SELECT user_id FROM active_users WHERE last_seen >= ?", (cutoff,)
             ).fetchall()
             return [row[0] for row in rows]
+    except Exception:
+        return []
+
+
+def set_user_files_disabled(user_id: int, disabled: bool):
+    """Enable or disable file exports for a user"""
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE active_users SET files_disabled = ? WHERE user_id = ?",
+                (1 if disabled else 0, user_id)
+            )
+    except Exception as e:
+        print(f"Stats error: {e}")
+
+
+def get_files_disabled_users() -> set:
+    """Return set of user_ids that have file exports disabled"""
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT user_id FROM active_users WHERE files_disabled = 1"
+            ).fetchall()
+            return {row[0] for row in rows}
+    except Exception:
+        return set()
+
+
+def get_users_for_admin() -> list:
+    """Get user list with files_disabled flag for admin panel"""
+    try:
+        with get_db() as conn:
+            rows = conn.execute("""
+                SELECT user_id, username, email, files_disabled
+                FROM active_users
+                ORDER BY last_seen DESC
+                LIMIT 50
+            """).fetchall()
+            return [dict(r) for r in rows]
     except Exception:
         return []
 
