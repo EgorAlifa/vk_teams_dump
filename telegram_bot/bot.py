@@ -71,6 +71,7 @@ user_selected_chats: dict[int, list[str]] = {}
 user_exporting: dict[int, bool] = {}  # Блокировка повторных экспортов
 user_search_query: dict[int, str] = {}  # Поисковый запрос
 user_message_ids: dict[int, dict] = {}  # ID сообщений для удаления (code_msg, chats_msg)
+user_active_exports: dict[int, dict] = {}  # {user_id: {"uuid", "path", "created_at"}} — блокировка повторных выгрузок с файлами
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     """Создать текстовый прогресс-бар"""
@@ -1039,20 +1040,121 @@ async def ask_export_format(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("format:"))
 async def process_export(callback: CallbackQuery, state: FSMContext):
-    """Выполнить экспорт в выбранном формате"""
+    """Выбор формата: JSON → сразу экспорт, HTML/both → вопрос про файлы"""
     format_type = callback.data.split(":")[1]
     user_id = callback.from_user.id
-    session = user_sessions.get(user_id)
-    selected = user_selected_chats.get(user_id, [])
 
-    # Проверяем блокировку ещё раз
     if user_exporting.get(user_id):
         await callback.answer("⏳ Экспорт уже выполняется!", show_alert=True)
         return
 
     await callback.answer()
+    await state.update_data(format_type=format_type)
 
-    log_event("export_start", user_id, f"chats={len(selected)},format={format_type}")
+    if format_type == "json":
+        # JSON — файлов нет, экспорт сразу
+        await state.update_data(with_files=False)
+        await do_actual_export(callback, state)
+    else:
+        # HTML или both — спрашиваем про файлы
+        await _show_files_question(callback, state)
+
+
+async def _show_files_question(callback, state):
+    """Вопрос про файлы, или предупреждение об активной выгрузке"""
+    user_id = callback.from_user.id
+
+    # Проверяем, есть ли ещё активная выгрузка файлов
+    active = user_active_exports.get(user_id)
+    if active and os.path.isdir(active["path"]):
+        remaining_sec = 600 - (datetime.now().timestamp() - active["created_at"])
+        if remaining_sec > 0:
+            remaining_min = max(1, round(remaining_sec / 60))
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🗑️ Удалить и продолжить с файлами", callback_data="files:delete")
+            builder.button(text="📥 Без файлов", callback_data="files:no")
+            builder.adjust(1)
+            await safe_edit_text(
+                callback.message,
+                "📎 <b>Активная выгрузка файлов</b>\n\n"
+                "Файлы из предыдущей выгрузки ещё доступны.\n"
+                f"Автоудаление через ~{remaining_min} мин.\n\n"
+                "Пока они не удалены, новая выгрузка\n"
+                "с файлами невозможна.\n\n"
+                "Можете удалить сейчас или продолжить без файлов.",
+                reply_markup=builder.as_markup(),
+                parse_mode="HTML"
+            )
+            return
+
+    # Нет активной (или уже устаревшей) — спрашиваем
+    user_active_exports.pop(user_id, None)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📎 С файлами", callback_data="files:yes")
+    builder.button(text="📥 Без файлов (быстрее)", callback_data="files:no")
+    builder.adjust(1)
+
+    await safe_edit_text(
+        callback.message,
+        "📎 <b>Загружать файлы из чатов?</b>\n\n"
+        "Фото, видео и документы из переписки.\n\n"
+        "⚠️ Лимит zip: <b>2 ГБ</b>\n"
+        "Если файлов много — выгружайте по частям.\n"
+        "Файлы доступны <b>10 минут</b>.",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("files:"))
+async def handle_files_choice(callback: CallbackQuery, state: FSMContext):
+    """Обработка: с файлами / без / удалить старые и продолжить"""
+    choice = callback.data.split(":")[1]  # yes, no, delete
+    user_id = callback.from_user.id
+    await callback.answer()
+
+    if choice == "delete":
+        # Удаляем старую выгрузку и идём с файлами
+        active = user_active_exports.pop(user_id, None)
+        if active:
+            shutil.rmtree(active["path"], ignore_errors=True)
+            print(f"📎 User {user_id} deleted active export {active['uuid']}")
+        await state.update_data(with_files=True)
+    elif choice == "yes":
+        await state.update_data(with_files=True)
+    else:  # no
+        await state.update_data(with_files=False)
+
+    await do_actual_export(callback, state)
+
+
+@router.callback_query(F.data.startswith("delete_files:"))
+async def handle_delete_files(callback: CallbackQuery):
+    """Кнопка «Удалить файлы» в сообщении о завершении"""
+    user_id = callback.from_user.id
+    req_uuid = callback.data.split(":")[1]
+    active = user_active_exports.get(user_id)
+    if active and active["uuid"] == req_uuid:
+        shutil.rmtree(active["path"], ignore_errors=True)
+        user_active_exports.pop(user_id, None)
+        await safe_edit_reply_markup(callback.message, reply_markup=None)
+        await callback.answer("🗑️ Файлы удалены")
+    else:
+        await callback.answer("Файлы уже удалены", show_alert=True)
+
+
+async def do_actual_export(callback: CallbackQuery, state: FSMContext):
+    """Выполнить экспорт в выбранном формате"""
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id)
+    selected = user_selected_chats.get(user_id, [])
+
+    state_data = await state.get_data()
+    format_type = state_data.get("format_type", "html")
+    with_files = state_data.get("with_files", False)
+
+    log_event("export_start", user_id, f"chats={len(selected)},format={format_type},files={with_files}")
     update_active_user(user_id, callback.from_user.username)
 
     # Устанавливаем блокировку
@@ -1075,9 +1177,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     avatars = {}  # Словарь аватарок (собираем по ходу экспорта)
 
     # Получаем данные о чатах заранее
-    state_data = await state.get_data()
     all_chats = state_data.get("contacts", [])
-    with_avatars = state_data.get("with_avatars", True)  # По умолчанию с аватарками для обратной совместимости
+    with_avatars = state_data.get("with_avatars", True)
 
     # Фоновая задача для загрузки аватарок (только для HTML и если пользователь выбрал)
     async def avatar_downloader(queue, avatars_dict):
@@ -1206,21 +1307,39 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 shutil.rmtree(entry_path, ignore_errors=True)
                 print(f"📎 Cleaned up old export: {entry}")
 
-    if format_type in ("html", "both") and all_exports:
-        # Собираем все уникальные файлы из filesharing
+    if format_type in ("html", "both") and all_exports and with_files:
+        # Собираем уникальные файлы, дедупликация по имени
         all_files = {}  # {original_url: {name, size, mime}}
+        seen_names = set()
+        name_to_url = {}       # {name: первый original_url} — для подстановки дублей в HTML
+        duplicate_url_map = {} # {dup_url: first_url} — дубли по имени
         for chat_export in all_exports:
             for msg in chat_export.get("messages", []):
                 for file in msg.get("filesharing", []):
                     url = file.get("original_url")
-                    if url and url not in all_files:
-                        all_files[url] = {
-                            "name": file.get("name", "file"),
-                            "size": file.get("size", 0),
-                            "mime": file.get("mime", ""),
-                        }
+                    name = file.get("name", "")
+                    if not url:
+                        continue
+                    if url in all_files:
+                        continue
+                    if name and name in seen_names:
+                        # Дубль по имени — не скачаем, но подставим ссылку первого
+                        duplicate_url_map[url] = name_to_url[name]
+                        continue
+                    all_files[url] = {
+                        "name": name or "file",
+                        "size": file.get("size", 0),
+                        "mime": file.get("mime", ""),
+                    }
+                    if name:
+                        seen_names.add(name)
+                        name_to_url[name] = url
 
         if all_files:
+            # Оценочный размер
+            estimated_bytes = sum(f["size"] for f in all_files.values())
+            estimated_mb = estimated_bytes / 1024 ** 2
+
             # Проверяем свободное место
             try:
                 st = os.statvfs("/tmp")
@@ -1240,11 +1359,16 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 total_bytes = 0
                 MAX_EXPORT_SIZE = 2 * 1024 ** 3  # 2 GB max per export
 
+                size_warn = ""
+                if estimated_mb > 2048:
+                    size_warn = f"\n⚠️ Оценка {estimated_mb:.0f} МБ > 2 ГБ — загрузим первые 2 ГБ"
+                dups_info = f" (пропущено {len(duplicate_url_map)} дублей)" if duplicate_url_map else ""
+
                 await safe_edit_text(
                     status_msg,
                     f"📎 <b>Загрузка файлов</b>\n\n"
                     f"{make_progress_bar(0, total_files)}\n\n"
-                    f"Файлов для загрузки: {total_files}",
+                    f"Файлов: {total_files}{dups_info}, ~{estimated_mb:.0f} МБ{size_warn}",
                     parse_mode="HTML"
                 )
 
@@ -1303,6 +1427,11 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 
                 print(f"📎 Files downloaded: {downloaded_files}/{total_files}, {total_bytes / 1024**2:.1f} MB total")
 
+                # Подставляем дубли по имени → на скачанный файл в HTML
+                for dup_url, first_url in duplicate_url_map.items():
+                    if first_url in files_url_map:
+                        files_url_map[dup_url] = files_url_map[first_url]
+
                 # Собираем zip из скачанных файлов
                 if downloaded_files > 0:
                     try:
@@ -1320,6 +1449,12 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                             files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
                             files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
                             print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
+                            # Запоминаем для блокировки повторной выгрузки с файлами
+                            user_active_exports[user_id] = {
+                                "uuid": export_uuid,
+                                "path": export_dir,
+                                "created_at": datetime.now().timestamp(),
+                            }
                     except Exception as e:
                         print(f"📎 Zip creation failed: {e}")
 
@@ -1492,6 +1627,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     update_user_export(user_id, success=not critical_error and not errors, errors=errors if errors else None)
 
     files_text = ""
+    files_keyboard = None
     if files_url_map:
         if files_zip_url:
             files_text = (
@@ -1499,6 +1635,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                 f'<a href="{files_zip_url}">скачать zip ({files_zip_size_mb:.1f} МБ)</a>\n'
                 f'⏰ Ссылка на файлы доступна 10 минут'
             )
+            files_keyboard = InlineKeyboardBuilder()
+            files_keyboard.button(text="🗑️ Удалить файлы", callback_data=f"delete_files:{export_uuid}")
         else:
             files_text = f"\n📎 Файлов в HTML: {len(files_url_map)}"
 
@@ -1508,6 +1646,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         f"📝 Всего сообщений: {total_msgs}"
         f"{files_text}"
         f"{error_text}{support_text}",
+        reply_markup=files_keyboard.as_markup() if files_keyboard else None,
         parse_mode="HTML"
     )
 
