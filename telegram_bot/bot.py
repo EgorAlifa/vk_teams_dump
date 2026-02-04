@@ -77,6 +77,7 @@ user_message_ids: dict[int, dict] = {}  # ID сообщений для удал�
 user_active_exports: dict[int, dict] = {}  # {user_id: {"uuid", "path", "created_at"}} — блокировка повторных выгрузок с файлами
 _files_enabled: bool = True  # Глобальный флаг: файлы доступны всем (загружен из DB при старте)
 _pending_broadcasts: dict[int, str] = {}  # {admin_user_id: broadcast_text} — ожидающие подтверждения
+_files_auto_reenable_at: Optional[float] = None  # epoch — когда автоматически включить файлы (None = нет)
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     """Создать текстовый прогресс-бар"""
@@ -1409,6 +1410,16 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
 
             if exports_used_gb >= config.MAX_DISK_GB:
                 print(f"⚠️ Exports disk limit reached ({exports_used_gb:.1f} / {config.MAX_DISK_GB} GB), skipping file downloads")
+                if _files_enabled:
+                    asyncio.ensure_future(_auto_disable_files())
+                await safe_edit_text(
+                    status_msg,
+                    f"⚠️ <b>Лимит диска для файлов достигнут</b>\n\n"
+                    f"Занято: <code>{exports_used_gb:.1f} / {config.MAX_DISK_GB} GB</code>\n"
+                    f"Файлы временно отключены — включат автоматически через 20 минут.\n\n"
+                    f"Экспорт продолжается без файлов.",
+                    parse_mode="HTML"
+                )
             else:
                 export_uuid = str(uuid_mod.uuid4())
                 export_dir = os.path.join(EXPORTS_DIR, export_uuid)
@@ -1735,6 +1746,60 @@ async def cmd_export(message: Message):
 
 # ============== Admin Commands ==============
 
+
+async def _notify_admins(text: str):
+    """Уведомить всех админов"""
+    if not _bot:
+        return
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await _bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception as e:
+            print(f"Failed to notify admin {admin_id}: {e}")
+
+
+async def _auto_disable_files(minutes: int = 20):
+    """Автовыключить файлы для всех из-за лимита диска; запустить таймер включения"""
+    global _files_enabled, _files_auto_reenable_at
+    _files_enabled = False
+    _files_auto_reenable_at = datetime.now().timestamp() + minutes * 60
+    set_setting("files_enabled", "0")
+    set_setting("files_auto_reenable_at", str(_files_auto_reenable_at))
+    log_event("auto_files_off", data=f"disk_limit={config.MAX_DISK_GB}GB, reenable_in={minutes}min")
+
+    await _notify_admins(
+        f"🔒 <b>Файлы автоматически выключены</b>\n\n"
+        f"Достигнут лимит диска <code>{config.MAX_DISK_GB} GB</code>.\n"
+        f"Файлы включат автоматически через <b>{minutes} минут</b>.\n\n"
+        f"Для немедленного включения: /admin"
+    )
+
+    asyncio.ensure_future(_scheduled_reenable_task(_files_auto_reenable_at))
+
+
+async def _scheduled_reenable_task(expected_at: float):
+    """Фоновая задача: спать до expected_at, затем включить файлы (если не отменено)"""
+    sleep_sec = max(0, expected_at - datetime.now().timestamp())
+    if sleep_sec > 0:
+        await asyncio.sleep(sleep_sec)
+
+    global _files_enabled, _files_auto_reenable_at
+    # Если админ уже переключил вручную — не трогаем
+    if _files_auto_reenable_at != expected_at:
+        return
+
+    _files_enabled = True
+    _files_auto_reenable_at = None
+    set_setting("files_enabled", "1")
+    set_setting("files_auto_reenable_at", "")
+    log_event("auto_files_on", data="auto_reenable after disk limit timeout")
+
+    await _notify_admins(
+        "✅ <b>Файлы автоматически включены</b>\n\n"
+        "Таймер автовыключения истёк — файлы снова доступны для всех."
+    )
+
+
 async def broadcast_message(bot: Bot, message_text: str, exclude_user_id: int = None) -> tuple[int, int]:
     """Broadcast message to all active users
     Returns: (sent_count, failed_count)
@@ -1894,9 +1959,13 @@ async def cmd_admin(message: Message):
     builder.adjust(1)
 
     status = "✅ <b>включены</b>" if _files_enabled else "❌ <b>выключены</b>"
+    auto_info = ""
+    if _files_auto_reenable_at and not _files_enabled:
+        remaining_min = max(0, round((_files_auto_reenable_at - datetime.now().timestamp()) / 60))
+        auto_info = f"\n⏰ Автоматически включат через {remaining_min} мин"
     await message.answer(
         f"🔧 <b>Управление файлами</b>\n\n"
-        f"Файлы сейчас: {status}\n\n"
+        f"Файлы сейчас: {status}{auto_info}\n\n"
         f"Когда выключены — кнопки «С файлами» и «Только файлы» не появляются у пользователей.",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
@@ -1910,12 +1979,14 @@ async def handle_admin_toggle(callback: CallbackQuery):
         await callback.answer("❌ Доступно только администраторам.", show_alert=True)
         return
 
-    global _files_enabled
+    global _files_enabled, _files_auto_reenable_at
     action = callback.data.split(":")[1]  # files_on / files_off
 
     if action == "files_on":
         _files_enabled = True
+        _files_auto_reenable_at = None  # отменяем автовыключение если было
         set_setting("files_enabled", "1")
+        set_setting("files_auto_reenable_at", "")
         log_event("admin_files_on", callback.from_user.id)
     else:
         _files_enabled = False
@@ -1932,9 +2003,13 @@ async def handle_admin_toggle(callback: CallbackQuery):
     builder.adjust(1)
 
     status = "✅ <b>включены</b>" if _files_enabled else "❌ <b>выключены</b>"
+    auto_info = ""
+    if _files_auto_reenable_at and not _files_enabled:
+        remaining_min = max(0, round((_files_auto_reenable_at - datetime.now().timestamp()) / 60))
+        auto_info = f"\n⏰ Автоматически включат через {remaining_min} мин"
     await callback.message.edit_text(
         f"🔧 <b>Управление файлами</b>\n\n"
-        f"Файлы сейчас: {status}\n\n"
+        f"Файлы сейчас: {status}{auto_info}\n\n"
         f"Когда выключены — кнопки «С файлами» и «Только файлы» не появляются у пользователей.",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
@@ -2021,9 +2096,30 @@ async def main():
             print(f"⚠️ Не удалось установить админ-меню для {admin_id}: {e}")
 
     # Загружаем глобальный флаг файлов из DB
-    global _files_enabled
+    global _files_enabled, _files_auto_reenable_at
     _files_enabled = get_setting("files_enabled", "1") != "0"
     print(f"📎 Files enabled: {_files_enabled}")
+
+    # Проверяем автовыключение с предыдущего запуска
+    _reenable_str = get_setting("files_auto_reenable_at", "")
+    if _reenable_str:
+        try:
+            _files_auto_reenable_at = float(_reenable_str)
+            if _files_auto_reenable_at > datetime.now().timestamp():
+                # Таймер ещё не истёк — держим выключенными и запускаем фоновую задачу
+                _files_enabled = False
+                asyncio.ensure_future(_scheduled_reenable_task(_files_auto_reenable_at))
+                remaining_min = round((_files_auto_reenable_at - datetime.now().timestamp()) / 60)
+                print(f"⏰ Auto-reenable scheduled, remaining: {remaining_min} min")
+            else:
+                # Таймер уже истёк — включаем файлы
+                _files_enabled = True
+                _files_auto_reenable_at = None
+                set_setting("files_enabled", "1")
+                set_setting("files_auto_reenable_at", "")
+                print("📎 Auto-reenable time passed, files re-enabled")
+        except (ValueError, OSError):
+            pass
 
     log_event("bot_start", data="Bot started")
     print("🚀 Бот запущен!")
