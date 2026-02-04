@@ -1026,6 +1026,7 @@ async def ask_export_format(callback: CallbackQuery, state: FSMContext):
     builder.button(text="📄 JSON (данные)", callback_data="format:json")
     builder.button(text="🌐 HTML (для чтения)", callback_data="format:html")
     builder.button(text="📦 Оба формата", callback_data="format:both")
+    builder.button(text="📎 Только файлы (zip)", callback_data="format:files_only")
     builder.adjust(1)
 
     avatars_text = "с аватарками" if avatars_choice == "yes" else "без аватарок"
@@ -1054,6 +1055,29 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     if format_type == "json":
         # JSON — файлов нет, экспорт сразу
         await state.update_data(with_files=False)
+        await do_actual_export(callback, state)
+    elif format_type == "files_only":
+        # Только файлы — проверяем блокировку, нет вопросов про HTML
+        active = user_active_exports.get(user_id)
+        if active and os.path.isdir(active["path"]):
+            remaining_sec = 600 - (datetime.now().timestamp() - active["created_at"])
+            if remaining_sec > 0:
+                remaining_min = max(1, round(remaining_sec / 60))
+                builder = InlineKeyboardBuilder()
+                builder.button(text="🗑️ Удалить и продолжить", callback_data="files:delete")
+                builder.adjust(1)
+                await safe_edit_text(
+                    callback.message,
+                    "📎 <b>Активная выгрузка файлов</b>\n\n"
+                    "Файлы из предыдущей выгрузки ещё доступны.\n"
+                    f"Автоудаление через ~{remaining_min} мин.\n\n"
+                    "Для новой выгрузки нужно удалить старые.",
+                    reply_markup=builder.as_markup(),
+                    parse_mode="HTML"
+                )
+                return
+        user_active_exports.pop(user_id, None)
+        await state.update_data(with_files=True)
         await do_actual_export(callback, state)
     else:
         # HTML или both — спрашиваем про файлы
@@ -1307,13 +1331,22 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                 shutil.rmtree(entry_path, ignore_errors=True)
                 print(f"📎 Cleaned up old export: {entry}")
 
-    if format_type in ("html", "both") and all_exports and with_files:
-        # Собираем уникальные файлы, дедупликация по имени
-        all_files = {}  # {original_url: {name, size, mime}}
-        seen_names = set()
+    if format_type in ("html", "both", "files_only") and all_exports and with_files:
+        # Собираем уникальные файлы, дедупликация по имени внутри каждого чата
+        all_files = {}  # {original_url: {name, size, mime, chat_folder}}
+        seen_keys = set()  # (chat_folder, name)
         name_to_url = {}       # {name: первый original_url} — для подстановки дублей в HTML
         duplicate_url_map = {} # {dup_url: first_url} — дубли по имени
         for chat_export in all_exports:
+            # Определяем имя папки для файлов этого чата
+            chat_sn = chat_export.get("chat_sn", "")
+            chat_info_entry = next((c for c in all_chats if c.get("sn") == chat_sn), {})
+            raw_chat_name = chat_info_entry.get("name") or chat_info_entry.get("friendly") or chat_sn or "unknown"
+            chat_folder = raw_chat_name
+            for ch in '/\\:*?"<>|':
+                chat_folder = chat_folder.replace(ch, "_")
+            chat_folder = chat_folder.strip()[:60] or "unknown"
+
             for msg in chat_export.get("messages", []):
                 for file in msg.get("filesharing", []):
                     url = file.get("original_url")
@@ -1322,17 +1355,19 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                         continue
                     if url in all_files:
                         continue
-                    if name and name in seen_names:
-                        # Дубль по имени — не скачаем, но подставим ссылку первого
-                        duplicate_url_map[url] = name_to_url[name]
+                    dedup_key = (chat_folder, name)
+                    if name and dedup_key in seen_keys:
+                        # Дубль по имени в том же чате — не скачаем, но подставим ссылку первого
+                        duplicate_url_map[url] = name_to_url.get(name, url)
                         continue
                     all_files[url] = {
                         "name": name or "file",
                         "size": file.get("size", 0),
                         "mime": file.get("mime", ""),
+                        "chat_folder": chat_folder,
                     }
                     if name:
-                        seen_names.add(name)
+                        seen_keys.add(dedup_key)
                         name_to_url[name] = url
 
         if all_files:
@@ -1373,19 +1408,24 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                 )
 
                 # Пре-вычисляем безопасные имена (без гонок при параллельной загрузке)
-                file_list = []  # [(orig_url, safe_name, dest_path)]
-                used_names = set()
+                file_list = []  # [(orig_url, rel_path, dest_path)]
+                used_rel_paths = set()
                 for i, (orig_url, file_info) in enumerate(all_files.items()):
                     safe_name = file_info["name"]
                     for ch in '/\\:*?"<>|':
                         safe_name = safe_name.replace(ch, "_")
                     if not safe_name:
                         safe_name = f"file_{i}"
-                    if safe_name in used_names:
+                    chat_folder = file_info["chat_folder"]
+                    rel_path = f"{chat_folder}/{safe_name}"
+                    if rel_path in used_rel_paths:
                         base, ext = os.path.splitext(safe_name)
                         safe_name = f"{base}_{i}{ext}"
-                    used_names.add(safe_name)
-                    file_list.append((orig_url, safe_name, os.path.join(export_dir, safe_name)))
+                        rel_path = f"{chat_folder}/{safe_name}"
+                    used_rel_paths.add(rel_path)
+                    chat_dir = os.path.join(export_dir, chat_folder)
+                    os.makedirs(chat_dir, exist_ok=True)
+                    file_list.append((orig_url, rel_path, os.path.join(chat_dir, safe_name)))
 
                 # Параллельная загрузка: 5 горутин одновременно
                 dl_sem = asyncio.Semaphore(5)
@@ -1442,10 +1482,13 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                         else:
                             zip_path = os.path.join(export_dir, "_files.zip")
                             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
-                                for fname in sorted(os.listdir(export_dir)):
-                                    if fname == "_files.zip":
-                                        continue
-                                    zf.write(os.path.join(export_dir, fname), fname)
+                                for dirpath, dirnames, filenames in os.walk(export_dir):
+                                    for fname in sorted(filenames):
+                                        if fname == "_files.zip":
+                                            continue
+                                        full_path = os.path.join(dirpath, fname)
+                                        arcname = os.path.relpath(full_path, export_dir)
+                                        zf.write(full_path, arcname)
                             files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
                             files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
                             print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
@@ -1465,124 +1508,125 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
         "chats": all_exports
     }
 
-    # Создаём файлы и упаковываем в ZIP
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Создаём файлы и упаковываем в ZIP (только для html/json/both, не для files_only)
+    if format_type != "files_only":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Создаём файлы внутри архива
-            files_for_zip = []
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Создаём файлы внутри архива
+                files_for_zip = []
 
-            if format_type in ("json", "both"):
-                json_filename = f"vkteams_export_{timestamp}.json"
-                json_path = os.path.join(tmpdir, json_filename)
-                with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(final_export, f, ensure_ascii=False, indent=2)
-                files_for_zip.append((json_path, json_filename))
+                if format_type in ("json", "both"):
+                    json_filename = f"vkteams_export_{timestamp}.json"
+                    json_path = os.path.join(tmpdir, json_filename)
+                    with open(json_path, "w", encoding="utf-8") as f:
+                        json.dump(final_export, f, ensure_ascii=False, indent=2)
+                    files_for_zip.append((json_path, json_filename))
 
-            if format_type in ("html", "both"):
-                html_filename = f"vkteams_export_{timestamp}.html"
-                html_path = os.path.join(tmpdir, html_filename)
+                if format_type in ("html", "both"):
+                    html_filename = f"vkteams_export_{timestamp}.html"
+                    html_path = os.path.join(tmpdir, html_filename)
 
-                # Создаём словарь имён из контактов
-                names = {}
-                for contact in all_chats:
-                    sn = contact.get("sn", "")
-                    name = contact.get("name") or contact.get("friendly") or ""
-                    # Используем имя только если это не email/sn
-                    if sn and name and name != sn and "@" not in name:
-                        names[sn] = name
-                print(f"👤 Loaded contact names: {len(names)} entries")
-                print(f"📷 Total avatars collected: {len(avatars)}")
+                    # Создаём словарь имён из контактов
+                    names = {}
+                    for contact in all_chats:
+                        sn = contact.get("sn", "")
+                        name = contact.get("name") or contact.get("friendly") or ""
+                        # Используем имя только если это не email/sn
+                        if sn and name and name != sn and "@" not in name:
+                            names[sn] = name
+                    print(f"👤 Loaded contact names: {len(names)} entries")
+                    print(f"📷 Total avatars collected: {len(avatars)}")
 
-                # Статус: генерация HTML
-                await safe_edit_text(
-                    status_msg,
-                    f"⏳ <b>Генерация HTML...</b>\n\n"
-                    f"📊 Чатов: {len(all_exports)}\n"
-                    f"📝 Сообщений: {total_msgs}\n"
-                    f"📷 Аватарок: {len(avatars)}\n"
-                    f"📎 Файлов: {len(files_url_map)}\n"
-                    f"👤 Контактов: {len(names)}\n\n"
-                    f"Это может занять время для больших экспортов",
-                    parse_mode="HTML"
-                )
-
-                try:
-                    print(f"📝 Generating HTML for {len(all_exports)} chats, {total_msgs} messages...")
-                    html_content = format_as_html(final_export, avatars=avatars, names=names, files_url_map=files_url_map)
-                    print(f"✅ HTML generated: {len(html_content)} bytes")
-                except Exception as html_err:
-                    print(f"❌ HTML generation error: {html_err}")
-                    errors.append(f"HTML форматирование: {html_err}")
-                    html_content = f"<html><body><h1>Ошибка форматирования</h1><pre>{html_err}</pre></body></html>"
-
-                with open(html_path, "w", encoding="utf-8") as f:
-                    f.write(html_content)
-                files_for_zip.append((html_path, html_filename))
-
-                # Освобождаем память
-                del html_content
-                gc.collect()
-
-            # Создаём ZIP архив с максимальным сжатием
-            zip_filename = f"vkteams_export_{timestamp}.zip"
-            zip_path = os.path.join(tmpdir, zip_filename)
-
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-                for file_path, arcname in files_for_zip:
-                    zf.write(file_path, arcname)
-
-            # Проверяем размер ZIP
-            zip_size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-
-            # Отправляем файл
-            status_text = "✅ <b>Экспорт завершён!</b>" if not critical_error else "⚠️ <b>Экспорт завершён с ошибками</b>"
-            await safe_edit_text(
-                status_msg,
-                f"{status_text}\n\n"
-                f"📊 Чатов: {len(all_exports)}\n"
-                f"📦 Размер архива: {zip_size_mb:.1f} MB\n"
-                f"📨 Отправляю файл...",
-                parse_mode="HTML"
-            )
-
-            if zip_size_mb > 50:
-                await callback.message.answer(
-                    f"⚠️ Архив слишком большой ({zip_size_mb:.1f} MB).\n"
-                    f"Лимит Telegram: 50 MB.\n\n"
-                    f"Попробуйте экспортировать меньше чатов.",
-                    parse_mode="HTML"
-                )
-            else:
-                try:
-                    # Отправка с retry логикой и exponential backoff
-                    caption = (
-                        f"📦 VK Teams Export ({format_type.upper()})\n"
-                        f"📊 {len(all_exports)} чатов, {sum(e.get('total_messages', 0) for e in all_exports)} сообщений"
-                    )
-                    await send_document_with_retry(
-                        callback.bot,
-                        callback.message.chat.id,
-                        zip_path,
-                        caption,
-                        max_retries=4
-                    )
-                except (asyncio.TimeoutError, TelegramNetworkError) as e:
-                    await callback.message.answer(
-                        f"⚠️ Не удалось отправить файл после 4 попыток.\n"
-                        f"Ошибка: {e}\n\n"
-                        f"Попробуйте экспортировать меньше чатов или повторите позже.\n"
-                        f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
+                    # Статус: генерация HTML
+                    await safe_edit_text(
+                        status_msg,
+                        f"⏳ <b>Генерация HTML...</b>\n\n"
+                        f"📊 Чатов: {len(all_exports)}\n"
+                        f"📝 Сообщений: {total_msgs}\n"
+                        f"📷 Аватарок: {len(avatars)}\n"
+                        f"📎 Файлов: {len(files_url_map)}\n"
+                        f"👤 Контактов: {len(names)}\n\n"
+                        f"Это может занять время для больших экспортов",
                         parse_mode="HTML"
                     )
 
-    except Exception as file_err:
-        await callback.message.answer(
-            f"❌ Ошибка при создании файлов: {file_err}\n\n"
-            f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
-            parse_mode="HTML"
-        )
+                    try:
+                        print(f"📝 Generating HTML for {len(all_exports)} chats, {total_msgs} messages...")
+                        html_content = format_as_html(final_export, avatars=avatars, names=names, files_url_map=files_url_map)
+                        print(f"✅ HTML generated: {len(html_content)} bytes")
+                    except Exception as html_err:
+                        print(f"❌ HTML generation error: {html_err}")
+                        errors.append(f"HTML форматирование: {html_err}")
+                        html_content = f"<html><body><h1>Ошибка форматирования</h1><pre>{html_err}</pre></body></html>"
+
+                    with open(html_path, "w", encoding="utf-8") as f:
+                        f.write(html_content)
+                    files_for_zip.append((html_path, html_filename))
+
+                    # Освобождаем память
+                    del html_content
+                    gc.collect()
+
+                # Создаём ZIP архив с максимальным сжатием
+                zip_filename = f"vkteams_export_{timestamp}.zip"
+                zip_path = os.path.join(tmpdir, zip_filename)
+
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+                    for file_path, arcname in files_for_zip:
+                        zf.write(file_path, arcname)
+
+                # Проверяем размер ZIP
+                zip_size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+
+                # Отправляем файл
+                status_text = "✅ <b>Экспорт завершён!</b>" if not critical_error else "⚠️ <b>Экспорт завершён с ошибками</b>"
+                await safe_edit_text(
+                    status_msg,
+                    f"{status_text}\n\n"
+                    f"📊 Чатов: {len(all_exports)}\n"
+                    f"📦 Размер архива: {zip_size_mb:.1f} MB\n"
+                    f"📨 Отправляю файл...",
+                    parse_mode="HTML"
+                )
+
+                if zip_size_mb > 50:
+                    await callback.message.answer(
+                        f"⚠️ Архив слишком большой ({zip_size_mb:.1f} MB).\n"
+                        f"Лимит Telegram: 50 MB.\n\n"
+                        f"Попробуйте экспортировать меньше чатов.",
+                        parse_mode="HTML"
+                    )
+                else:
+                    try:
+                        # Отправка с retry логикой и exponential backoff
+                        caption = (
+                            f"📦 VK Teams Export ({format_type.upper()})\n"
+                            f"📊 {len(all_exports)} чатов, {sum(e.get('total_messages', 0) for e in all_exports)} сообщений"
+                        )
+                        await send_document_with_retry(
+                            callback.bot,
+                            callback.message.chat.id,
+                            zip_path,
+                            caption,
+                            max_retries=4
+                        )
+                    except (asyncio.TimeoutError, TelegramNetworkError) as e:
+                        await callback.message.answer(
+                            f"⚠️ Не удалось отправить файл после 4 попыток.\n"
+                            f"Ошибка: {e}\n\n"
+                            f"Попробуйте экспортировать меньше чатов или повторите позже.\n"
+                            f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
+                            parse_mode="HTML"
+                        )
+
+        except Exception as file_err:
+            await callback.message.answer(
+                f"❌ Ошибка при создании файлов: {file_err}\n\n"
+                f"При проблемах обратитесь: <code>{SUPPORT_CONTACT}</code>",
+                parse_mode="HTML"
+            )
 
     # Итоговое сообщение
     error_text = ""
