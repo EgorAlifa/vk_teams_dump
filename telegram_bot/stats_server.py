@@ -5,13 +5,21 @@ Uses only Python stdlib - no extra dependencies
 
 import json
 import os
+import shutil
 import threading
 import time
+import mimetypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from stats import get_stats, save_metrics, get_metrics_history
 
 PORT = int(os.environ.get("STATS_PORT", 8080))
 METRICS_INTERVAL = 60  # Сохранять метрики каждые 60 секунд
+
+EXPORTS_DIR = "/tmp/vkteams_exports"
+FILES_TTL = 600  # 10 минут в секундах
+MIN_FREE_DISK_GB = 5  # Не создавать новые файлы если свободно меньше 5 GB
+
+os.makedirs(EXPORTS_DIR, exist_ok=True)
 
 
 def metrics_collector():
@@ -22,6 +30,33 @@ def metrics_collector():
         except Exception as e:
             print(f"Metrics collector error: {e}")
         time.sleep(METRICS_INTERVAL)
+
+
+def exports_cleanup():
+    """Background thread: удаляет папки экспорта старше TTL"""
+    while True:
+        try:
+            now = time.time()
+            if os.path.isdir(EXPORTS_DIR):
+                for entry in os.listdir(EXPORTS_DIR):
+                    entry_path = os.path.join(EXPORTS_DIR, entry)
+                    if os.path.isdir(entry_path):
+                        mtime = os.path.getmtime(entry_path)
+                        if now - mtime > FILES_TTL:
+                            shutil.rmtree(entry_path, ignore_errors=True)
+                            print(f"🗑️ Cleaned up expired export: {entry}")
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+        time.sleep(30)  # Проверяем каждые 30 секунд
+
+
+def get_free_disk_gb() -> float:
+    """Свободное место на диске в GB"""
+    try:
+        st = os.statvfs("/tmp")
+        return (st.f_bavail * st.f_frsize) / (1024 ** 3)
+    except Exception:
+        return 0.0
 
 
 class StatsHandler(BaseHTTPRequestHandler):
@@ -36,6 +71,8 @@ class StatsHandler(BaseHTTPRequestHandler):
                 self.send_html()
             elif self.path == "/health":
                 self.send_json({"status": "ok"})
+            elif self.path.startswith("/files/"):
+                self.serve_export_file()
             else:
                 self.send_error(404)
         except Exception as e:
@@ -67,6 +104,57 @@ class StatsHandler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"ERROR sending HTML: {e}")
             raise
+
+    def serve_export_file(self):
+        """Раздача файлов экспорта: /files/{uuid}/{filename}"""
+        # path = /files/{uuid}/{filename}
+        parts = self.path.split("/")
+        # parts: ['', 'files', uuid, filename...]
+        if len(parts) < 4:
+            self.send_error(404)
+            return
+
+        uuid = parts[2]
+        filename = "/".join(parts[3:])  # filename может содержать подпапки
+
+        # Защита от path traversal
+        if ".." in uuid or ".." in filename or uuid.startswith("/") or filename.startswith("/"):
+            self.send_error(403)
+            return
+
+        file_path = os.path.join(EXPORTS_DIR, uuid, filename)
+        # Проверяем что path не выходит за EXPORTS_DIR
+        real_path = os.path.realpath(file_path)
+        if not real_path.startswith(os.path.realpath(EXPORTS_DIR)):
+            self.send_error(403)
+            return
+
+        if not os.path.isfile(real_path):
+            self.send_error(404)
+            return
+
+        # Определяем content-type
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = "application/octet-stream"
+
+        try:
+            file_size = os.path.getsize(real_path)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(file_size))
+            self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(filename)}"')
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+
+            with open(real_path, "rb") as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except Exception as e:
+            print(f"ERROR serving file {real_path}: {e}")
 
     def log_message(self, format, *args):
         # Log important messages
@@ -775,6 +863,11 @@ if __name__ == "__main__":
         collector_thread = threading.Thread(target=metrics_collector, daemon=True)
         collector_thread.start()
         print(f"Metrics collector started (interval: {METRICS_INTERVAL}s)")
+
+        # Запускаем очистку файлов экспорта в фоне
+        cleanup_thread = threading.Thread(target=exports_cleanup, daemon=True)
+        cleanup_thread.start()
+        print(f"Exports cleanup started (TTL: {FILES_TTL}s, dir: {EXPORTS_DIR})")
 
         # Сохраняем первую точку сразу
         try:

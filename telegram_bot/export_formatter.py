@@ -14,7 +14,7 @@ def format_as_json(data: dict) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile: bool = False) -> str:
+def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile: bool = False, files_url_map: dict = None) -> str:
     """
     Форматирование в HTML - современный дизайн 2025
     Светлая/тёмная тема, CSS-переключение чатов, аватарки
@@ -24,9 +24,11 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
         avatars: Словарь {sn: bytes} с аватарками (опционально)
         names: Словарь {sn: display_name} для отображения имён (опционально)
         mobile: Если True, генерировать мобильную версию
+        files_url_map: Словарь {original_url: local_url} для замены ссылок на файлы (опционально)
     """
     avatars = avatars or {}
     names = names or {}
+    files_url_map = files_url_map or {}
 
     # Фильтруем чаты без сообщений
     chats = [c for c in data.get("chats", []) if c.get("messages")]
@@ -147,7 +149,7 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
                     current_date = msg_date
                     messages_html += f'<div class="date-sep"><span>{msg_date}</span></div>'
 
-            messages_html += render_message(msg, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal, names=names)
+            messages_html += render_message(msg, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal, names=names, files_url_map=files_url_map)
 
         # Закреплённые
         pinned = chat.get("pinned_messages", [])
@@ -157,7 +159,7 @@ def format_as_html(data: dict, avatars: dict = None, names: dict = None, mobile:
             <details class="pinned">
                 <summary>📌 Закреплённых: {len(pinned)}</summary>
                 <div class="pinned-list">
-                    {"".join(render_message(m, pinned=True, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal, names=names) for m in pinned)}
+                    {"".join(render_message(m, pinned=True, chat_members=chat_members, chat_sn=chat_sn, is_personal=is_personal, names=names, files_url_map=files_url_map) for m in pinned)}
                 </div>
             </details>
             '''
@@ -844,9 +846,10 @@ function toggleTheme(){{
 </html>'''
 
 
-def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, chat_sn: str = "", is_personal: bool = False, names: dict = None) -> str:
+def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, chat_sn: str = "", is_personal: bool = False, names: dict = None, files_url_map: dict = None) -> str:
     """Рендер одного сообщения"""
     names = names or {}
+    files_url_map = files_url_map or {}
     is_outgoing = msg.get("outgoing", False)
 
     sender_sn = (
@@ -899,7 +902,8 @@ def render_message(msg: dict, pinned: bool = False, chat_members: dict = None, c
 
     for file in msg.get("filesharing", []):
         name = escape(file.get("name", "файл"))
-        url = escape(file.get("original_url", "#"))
+        orig_url = file.get("original_url", "")
+        url = escape(files_url_map.get(orig_url, orig_url) if orig_url else "#")
         size = format_size(file.get("size"))
         icon = get_file_icon(file.get("mime", ""))
         content += f'<div class="file">{icon} <a href="{url}" target="_blank">{name}</a> <small>{size}</small></div>'
