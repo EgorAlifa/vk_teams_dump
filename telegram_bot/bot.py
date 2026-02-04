@@ -1194,6 +1194,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     EXPORTS_DIR = "/tmp/vkteams_exports"
     export_uuid = None
     files_url_map = {}  # {original_url: local_url}
+    files_zip_url = ""
 
     if format_type in ("html", "both") and all_exports:
         # Собираем все уникальные файлы из filesharing
@@ -1287,6 +1288,15 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     await asyncio.sleep(0.3)
 
                 print(f"📎 Files downloaded: {downloaded_files}/{total_files}, {total_bytes / 1024**2:.1f} MB total")
+
+                # Собираем zip из скачанных файлов
+                if downloaded_files > 0:
+                    zip_path = os.path.join(export_dir, "_files.zip")
+                    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
+                        for fname in sorted(os.listdir(export_dir)):
+                            zf.write(os.path.join(export_dir, fname), fname)
+                    files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
+                    print(f"📎 Created _files.zip: {os.path.getsize(zip_path) / 1024**2:.1f} MB")
 
     # Формируем итоговый экспорт (даже при ошибках — отдаём что собрали)
     final_export = {
@@ -1458,7 +1468,10 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 
     files_text = ""
     if files_url_map:
-        files_text = f"\n📎 Файлов в HTML: {len(files_url_map)} (ссылки доступны 10 мин)"
+        if files_zip_url:
+            files_text = f'\n📎 Файлов: {len(files_url_map)} → <a href="{files_zip_url}">скачать zip</a> (доступен 10 мин)'
+        else:
+            files_text = f"\n📎 Файлов в HTML: {len(files_url_map)}"
 
     await callback.message.answer(
         f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"
