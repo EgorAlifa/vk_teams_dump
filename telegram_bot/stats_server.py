@@ -75,11 +75,16 @@ class StatsHandler(BaseHTTPRequestHandler):
                 self.serve_export_file()
             else:
                 self.send_error(404)
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass  # client disconnected — nothing to do
         except Exception as e:
             print(f"ERROR handling request {self.path}: {e}")
             import traceback
             traceback.print_exc()
-            self.send_error(500)
+            try:
+                self.send_error(500)
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+                pass
 
     def send_json(self, data):
         try:
@@ -89,9 +94,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode())
-        except Exception as e:
-            print(f"ERROR sending JSON: {e}")
-            raise
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass  # client disconnected mid-response
 
     def send_html(self):
         try:
@@ -101,9 +105,8 @@ class StatsHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML.encode())
-        except Exception as e:
-            print(f"ERROR sending HTML: {e}")
-            raise
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass  # client disconnected mid-response
 
     def serve_export_file(self):
         """Раздача файлов экспорта: /files/{uuid}/{filename}"""
