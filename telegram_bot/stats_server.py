@@ -107,8 +107,10 @@ class StatsHandler(BaseHTTPRequestHandler):
 
     def serve_export_file(self):
         """Раздача файлов экспорта: /files/{uuid}/{filename}"""
+        # Strip query string (e.g. ?utm_source=...)
+        path = self.path.split("?")[0]
         # path = /files/{uuid}/{filename}
-        parts = self.path.split("/")
+        parts = path.split("/")
         # parts: ['', 'files', uuid, filename...]
         if len(parts) < 4:
             self.send_error(404)

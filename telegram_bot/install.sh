@@ -395,10 +395,14 @@ services:
     build: .
     container_name: vkteams_export_bot
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     env_file:
       - .env
     volumes:
       - ./data:/app/data
+      - vkteams_exports:/tmp/vkteams_exports
     logging:
       driver: json-file
       options:
@@ -419,12 +423,16 @@ services:
     container_name: vkteams_stats
     restart: unless-stopped
     command: ["python", "stats_server.py"]
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     env_file:
       - .env
     ports:
       - "8080:8080"
     volumes:
       - ./data:/app/data
+      - vkteams_exports:/tmp/vkteams_exports
     deploy:
       resources:
         limits:
@@ -432,6 +440,9 @@ services:
           memory: 64M
     depends_on:
       - bot
+
+volumes:
+  vkteams_exports:
 COMPOSE_EOF
 
 echo -e "${GREEN}✓ docker-compose.yml обновлён${NC}"
