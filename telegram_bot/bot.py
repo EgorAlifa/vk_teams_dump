@@ -1195,6 +1195,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     export_uuid = None
     files_url_map = {}  # {original_url: local_url}
     files_zip_url = ""
+    files_zip_size_mb = 0.0
 
     if format_type in ("html", "both") and all_exports:
         # Собираем все уникальные файлы из filesharing
@@ -1296,7 +1297,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                         for fname in sorted(os.listdir(export_dir)):
                             zf.write(os.path.join(export_dir, fname), fname)
                     files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
-                    print(f"📎 Created _files.zip: {os.path.getsize(zip_path) / 1024**2:.1f} MB")
+                    files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
+                    print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
 
     # Формируем итоговый экспорт (даже при ошибках — отдаём что собрали)
     final_export = {
@@ -1469,7 +1471,11 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     files_text = ""
     if files_url_map:
         if files_zip_url:
-            files_text = f'\n📎 Файлов: {len(files_url_map)} → <a href="{files_zip_url}">скачать zip</a> (доступен 10 мин)'
+            files_text = (
+                f'\n📎 Файлов: {len(files_url_map)} → '
+                f'<a href="{files_zip_url}">скачать zip ({files_zip_size_mb:.1f} МБ)</a>\n'
+                f'⏰ Ссылка на файлы доступна 10 минут'
+            )
         else:
             files_text = f"\n📎 Файлов в HTML: {len(files_url_map)}"
 
