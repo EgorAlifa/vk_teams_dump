@@ -107,8 +107,10 @@ class StatsHandler(BaseHTTPRequestHandler):
 
     def serve_export_file(self):
         """Раздача файлов экспорта: /files/{uuid}/{filename}"""
+        # Strip query string (e.g. ?utm_source=...)
+        path = self.path.split("?")[0]
         # path = /files/{uuid}/{filename}
-        parts = self.path.split("/")
+        parts = path.split("/")
         # parts: ['', 'files', uuid, filename...]
         if len(parts) < 4:
             self.send_error(404)
@@ -130,6 +132,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             return
 
         if not os.path.isfile(real_path):
+            print(f"404: real_path={real_path}, dir_exists={os.path.isdir(os.path.dirname(real_path))}, exports_dir_contents={os.listdir(EXPORTS_DIR) if os.path.isdir(EXPORTS_DIR) else 'NO DIR'}")
             self.send_error(404)
             return
 
