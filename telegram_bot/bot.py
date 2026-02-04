@@ -37,7 +37,9 @@ from export_formatter import format_as_html, format_as_json
 
 # Stats tracking (lightweight)
 try:
-    from stats import log_event, update_active_user, get_active_user_ids, update_user_export
+    from stats import (log_event, update_active_user, get_active_user_ids,
+                       update_user_export, set_user_files_disabled,
+                       get_files_disabled_users, get_users_for_admin)
     STATS_ENABLED = True
 except ImportError:
     STATS_ENABLED = False
@@ -45,6 +47,9 @@ except ImportError:
     def update_active_user(*args, **kwargs): pass
     def get_active_user_ids(): return []
     def update_user_export(*args, **kwargs): pass
+    def set_user_files_disabled(*args, **kwargs): pass
+    def get_files_disabled_users(): return set()
+    def get_users_for_admin(): return []
 
 # Роутер для хэндлеров
 router = Router()
@@ -72,6 +77,7 @@ user_exporting: dict[int, bool] = {}  # Блокировка повторных 
 user_search_query: dict[int, str] = {}  # Поисковый запрос
 user_message_ids: dict[int, dict] = {}  # ID сообщений для удаления (code_msg, chats_msg)
 user_active_exports: dict[int, dict] = {}  # {user_id: {"uuid", "path", "created_at"}} — блокировка повторных выгрузок с файлами
+_files_disabled_users: set[int] = set()  # Кэш: user_id с отключёнными файлами (загружен из DB при старте)
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     """Создать текстовый прогресс-бар"""
@@ -1050,6 +1056,18 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer()
+
+    # Файлы отключены администратором — блокируем files_only полностью
+    if format_type == "files_only" and user_id in _files_disabled_users:
+        await safe_edit_text(
+            callback.message,
+            "❌ <b>Выгрузка файлов отключена</b>\n\n"
+            "Администратор отключил выгрузку файлов для вашего аккаунта.\n\n"
+            f"По вопросам: <code>{SUPPORT_CONTACT}</code>",
+            parse_mode="HTML"
+        )
+        return
+
     await state.update_data(format_type=format_type)
 
     if format_type == "json":
@@ -1087,6 +1105,12 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 async def _show_files_question(callback, state):
     """Вопрос про файлы, или предупреждение об активной выгрузке"""
     user_id = callback.from_user.id
+
+    # Файлы отключены администратором — не спрашиваем, идём без файлов
+    if user_id in _files_disabled_users:
+        await state.update_data(with_files=False)
+        await do_actual_export(callback, state)
+        return
 
     # Проверяем, есть ли ещё активная выгрузка файлов
     active = user_active_exports.get(user_id)
@@ -1807,6 +1831,60 @@ async def cmd_announce_update(message: Message):
     )
 
 
+# ============== Admin: управление файлами ==============
+
+def _build_admin_files_panel():
+    """Собрать текст и клавиатуру панели управления файлами"""
+    users = get_users_for_admin()
+    builder = InlineKeyboardBuilder()
+    lines = []
+    for u in users:
+        uid = u["user_id"]
+        name = u.get("username") or u.get("email") or str(uid)
+        disabled = bool(u.get("files_disabled"))
+        status = "❌ отключены" if disabled else "✅"
+        lines.append(f"{name} <code>{uid}</code> — файлы: {status}")
+        btn_text = "🔓 Вкл файлы" if disabled else "🔒 Выкл файлы"
+        builder.button(text=f"{btn_text} — {name}", callback_data=f"admin_files:{uid}")
+    builder.adjust(1)
+    text = "🔧 <b>Управление файлами</b>\n\n" + ("\n".join(lines) if lines else "Нет пользователей в БД")
+    return text, builder.as_markup()
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """Admin: панель управления файлами по пользователям"""
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("❌ Доступно только администраторам.")
+        return
+    text, markup = _build_admin_files_panel()
+    await message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin_files:"))
+async def handle_admin_files_toggle(callback: CallbackQuery):
+    """Тогл файлов для пользователя"""
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("❌ Доступно только администраторам.", show_alert=True)
+        return
+
+    global _files_disabled_users
+    target_uid = int(callback.data.split(":")[1])
+
+    if target_uid in _files_disabled_users:
+        _files_disabled_users.discard(target_uid)
+        set_user_files_disabled(target_uid, False)
+        log_event("admin_files_enabled", callback.from_user.id, str(target_uid))
+    else:
+        _files_disabled_users.add(target_uid)
+        set_user_files_disabled(target_uid, True)
+        log_event("admin_files_disabled", callback.from_user.id, str(target_uid))
+
+    await callback.answer()
+    text, markup = _build_admin_files_panel()
+    await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+
+
 # ============== Main ==============
 
 # Global bot reference for shutdown handler
@@ -1875,6 +1953,7 @@ async def main():
 
     # Устанавливаем расширенное меню для админов
     admin_commands = commands + [
+        BotCommand(command="admin", description="🔧 Управление файлами"),
         BotCommand(command="maintenance", description="⚠️ Уведомить о тех. работах"),
         BotCommand(command="announce_update", description="🆕 Уведомить об обновлении"),
     ]
@@ -1884,6 +1963,11 @@ async def main():
             print(f"✅ Админ-меню установлено для {admin_id}")
         except Exception as e:
             print(f"⚠️ Не удалось установить админ-меню для {admin_id}: {e}")
+
+    # Загружаем список пользователей с отключёнными файлами из DB
+    global _files_disabled_users
+    _files_disabled_users = get_files_disabled_users()
+    print(f"📎 Loaded {len(_files_disabled_users)} users with files disabled")
 
     log_event("bot_start", data="Bot started")
     print("🚀 Бот запущен!")
