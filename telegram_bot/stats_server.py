@@ -130,6 +130,7 @@ class StatsHandler(BaseHTTPRequestHandler):
             return
 
         if not os.path.isfile(real_path):
+            print(f"404: real_path={real_path}, dir_exists={os.path.isdir(os.path.dirname(real_path))}, exports_dir_contents={os.listdir(EXPORTS_DIR) if os.path.isdir(EXPORTS_DIR) else 'NO DIR'}")
             self.send_error(404)
             return
 
