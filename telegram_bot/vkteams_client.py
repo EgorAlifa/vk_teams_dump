@@ -5,6 +5,7 @@ VK Teams API Client
 
 import asyncio
 import aiohttp
+from aiohttp.resolver import AsyncResolver
 import random
 import time
 import logging
@@ -54,6 +55,7 @@ class VKTeamsClient:
         if cls._http_session is None or cls._http_session.closed:
             # Оптимизированные настройки коннектора
             connector = aiohttp.TCPConnector(
+                resolver=AsyncResolver(nameservers=["8.8.8.8", "8.8.4.4"]),
                 limit=10,  # Макс соединений
                 limit_per_host=5,  # Макс на хост
                 ttl_dns_cache=300,  # DNS кеш 5 мин
