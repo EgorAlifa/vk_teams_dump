@@ -115,6 +115,11 @@ def init_db():
                 disk_percent REAL
             );
 
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT DEFAULT ''
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
             CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
             CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
@@ -337,43 +342,23 @@ def get_active_user_ids(days: int = 30) -> list[int]:
         return []
 
 
-def set_user_files_disabled(user_id: int, disabled: bool):
-    """Enable or disable file exports for a user"""
+def get_setting(key: str, default: str = "") -> str:
+    """Read a global setting from the settings table"""
     try:
         with get_db() as conn:
-            conn.execute(
-                "UPDATE active_users SET files_disabled = ? WHERE user_id = ?",
-                (1 if disabled else 0, user_id)
-            )
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            return row[0] if row else default
+    except Exception:
+        return default
+
+
+def set_setting(key: str, value: str):
+    """Write a global setting"""
+    try:
+        with get_db() as conn:
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     except Exception as e:
         print(f"Stats error: {e}")
-
-
-def get_files_disabled_users() -> set:
-    """Return set of user_ids that have file exports disabled"""
-    try:
-        with get_db() as conn:
-            rows = conn.execute(
-                "SELECT user_id FROM active_users WHERE files_disabled = 1"
-            ).fetchall()
-            return {row[0] for row in rows}
-    except Exception:
-        return set()
-
-
-def get_users_for_admin() -> list:
-    """Get user list with files_disabled flag for admin panel"""
-    try:
-        with get_db() as conn:
-            rows = conn.execute("""
-                SELECT user_id, username, email, files_disabled
-                FROM active_users
-                ORDER BY last_seen DESC
-                LIMIT 50
-            """).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
 
 
 # Initialize on import
