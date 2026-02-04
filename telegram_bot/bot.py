@@ -1362,7 +1362,7 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                         continue
                     all_files[url] = {
                         "name": name or "file",
-                        "size": file.get("size", 0),
+                        "size": int(file.get("size", 0) or 0),
                         "mime": file.get("mime", ""),
                         "chat_folder": chat_folder,
                     }
