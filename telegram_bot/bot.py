@@ -1258,7 +1258,13 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                         dest_path = os.path.join(export_dir, safe_name)
 
                     try:
-                        data = await client.download_file(orig_url)
+                        # original_url -> files.myteam.mail.ru (не резолвится в контейнере)
+                        # dlink из files/info -> ub.myteam.vmailru.net (резолвится)
+                        file_id = orig_url.rstrip("/").split("/")[-1]
+                        dlink = await client.get_file_dlink(file_id)
+                        data = await client.download_file(dlink) if dlink else None
+                        if not dlink:
+                            print(f"📎 No dlink for {safe_name} (file_id={file_id})")
                         if data:
                             with open(dest_path, "wb") as f:
                                 f.write(data)
