@@ -1194,6 +1194,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     EXPORTS_DIR = "/tmp/vkteams_exports"
     export_uuid = None
     files_url_map = {}  # {original_url: local_url}
+    files_zip_url = ""
+    files_zip_size_mb = 0.0
 
     if format_type in ("html", "both") and all_exports:
         # Собираем все уникальные файлы из filesharing
@@ -1262,7 +1264,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                         # dlink из files/info -> ub.myteam.vmailru.net (резолвится)
                         file_id = orig_url.rstrip("/").split("/")[-1]
                         dlink = await client.get_file_dlink(file_id)
-                        data = await client.download_file(dlink) if dlink else None
+                        data = await client.download_file(dlink, max_size=500 * 1024 * 1024) if dlink else None
                         if not dlink:
                             print(f"📎 No dlink for {safe_name} (file_id={file_id})")
                         if data:
@@ -1287,6 +1289,16 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     await asyncio.sleep(0.3)
 
                 print(f"📎 Files downloaded: {downloaded_files}/{total_files}, {total_bytes / 1024**2:.1f} MB total")
+
+                # Собираем zip из скачанных файлов
+                if downloaded_files > 0:
+                    zip_path = os.path.join(export_dir, "_files.zip")
+                    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
+                        for fname in sorted(os.listdir(export_dir)):
+                            zf.write(os.path.join(export_dir, fname), fname)
+                    files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
+                    files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
+                    print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
 
     # Формируем итоговый экспорт (даже при ошибках — отдаём что собрали)
     final_export = {
@@ -1456,10 +1468,22 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     # Обновляем статус экспорта пользователя для мониторинга
     update_user_export(user_id, success=not critical_error and not errors, errors=errors if errors else None)
 
+    files_text = ""
+    if files_url_map:
+        if files_zip_url:
+            files_text = (
+                f'\n📎 Файлов: {len(files_url_map)} → '
+                f'<a href="{files_zip_url}">скачать zip ({files_zip_size_mb:.1f} МБ)</a>\n'
+                f'⏰ Ссылка на файлы доступна 10 минут'
+            )
+        else:
+            files_text = f"\n📎 Файлов в HTML: {len(files_url_map)}"
+
     await callback.message.answer(
         f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"
         f"📊 Экспортировано: {len(all_exports)} из {len(selected)} чатов\n"
         f"📝 Всего сообщений: {total_msgs}"
+        f"{files_text}"
         f"{error_text}{support_text}",
         parse_mode="HTML"
     )
