@@ -1239,54 +1239,58 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     parse_mode="HTML"
                 )
 
+                # Пре-вычисляем безопасные имена (без гонок при параллельной загрузке)
+                file_list = []  # [(orig_url, safe_name, dest_path)]
+                used_names = set()
                 for i, (orig_url, file_info) in enumerate(all_files.items()):
-                    # Проверяем лимит размера
-                    if total_bytes >= MAX_EXPORT_SIZE:
-                        print(f"📎 Export size limit reached ({total_bytes / 1024**3:.1f} GB), stopping downloads")
-                        break
-
-                    # Безопасное имя файла
                     safe_name = file_info["name"]
                     for ch in '/\\:*?"<>|':
                         safe_name = safe_name.replace(ch, "_")
                     if not safe_name:
                         safe_name = f"file_{i}"
-
-                    # Если файл с таким именем уже есть — добавим суффикс
-                    dest_path = os.path.join(export_dir, safe_name)
-                    if os.path.exists(dest_path):
+                    if safe_name in used_names:
                         base, ext = os.path.splitext(safe_name)
                         safe_name = f"{base}_{i}{ext}"
-                        dest_path = os.path.join(export_dir, safe_name)
+                    used_names.add(safe_name)
+                    file_list.append((orig_url, safe_name, os.path.join(export_dir, safe_name)))
 
-                    try:
-                        # original_url -> files.myteam.mail.ru (не резолвится в контейнере)
-                        # dlink из files/info -> ub.myteam.vmailru.net (резолвится)
-                        file_id = orig_url.rstrip("/").split("/")[-1]
-                        dlink = await client.get_file_dlink(file_id)
-                        data = await client.download_file(dlink, max_size=500 * 1024 * 1024) if dlink else None
-                        if not dlink:
-                            print(f"📎 No dlink for {safe_name} (file_id={file_id})")
-                        if data:
-                            with open(dest_path, "wb") as f:
-                                f.write(data)
-                            total_bytes += len(data)
-                            downloaded_files += 1
-                            files_url_map[orig_url] = f"{config.PUBLIC_URL}/files/{export_uuid}/{safe_name}"
-                    except Exception as e:
-                        print(f"📎 Error downloading {safe_name}: {e}")
+                # Параллельная загрузка: 5 горутин одновременно
+                dl_sem = asyncio.Semaphore(5)
 
-                    # Обновляем статус каждые 5 файлов
-                    if (i + 1) % 5 == 0 or i == total_files - 1:
+                async def _download_one(orig_url, safe_name, dest_path):
+                    nonlocal downloaded_files, total_bytes
+                    async with dl_sem:
+                        if total_bytes >= MAX_EXPORT_SIZE:
+                            return
+                        try:
+                            file_id = orig_url.rstrip("/").split("/")[-1]
+                            dlink = await client.get_file_dlink(file_id)
+                            if not dlink:
+                                print(f"📎 No dlink for {safe_name} (file_id={file_id})")
+                                return
+                            data = await client.download_file(dlink, max_size=500 * 1024 * 1024)
+                            if data:
+                                with open(dest_path, "wb") as f:
+                                    f.write(data)
+                                downloaded_files += 1
+                                total_bytes += len(data)
+                                files_url_map[orig_url] = f"{config.PUBLIC_URL}/files/{export_uuid}/{safe_name}"
+                        except Exception as e:
+                            print(f"📎 Error downloading {safe_name}: {e}")
+
+                tasks = [asyncio.create_task(_download_one(url, name, path)) for url, name, path in file_list]
+                completed = 0
+                for coro in asyncio.as_completed(tasks):
+                    await coro
+                    completed += 1
+                    if completed % 5 == 0 or completed == total_files:
                         await safe_edit_text(
                             status_msg,
                             f"📎 <b>Загрузка файлов</b>\n\n"
-                            f"{make_progress_bar(i + 1, total_files)}\n\n"
+                            f"{make_progress_bar(completed, total_files)}\n\n"
                             f"Загружено: {downloaded_files}/{total_files} ({total_bytes / 1024**2:.1f} MB)",
                             parse_mode="HTML"
                         )
-
-                    await asyncio.sleep(0.3)
 
                 print(f"📎 Files downloaded: {downloaded_files}/{total_files}, {total_bytes / 1024**2:.1f} MB total")
 
