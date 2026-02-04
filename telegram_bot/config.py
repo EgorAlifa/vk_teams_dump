@@ -23,3 +23,7 @@ MAX_FILE_SIZE_MB = 50  # Лимит Telegram для файлов
 # URL для раздачи файлов экспорта (без trailing slash)
 # Пример: http://89.208.231.122:8080
 PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8080")
+
+# Лимиты файлов экспорта
+MAX_DISK_GB = int(os.getenv("MAX_DISK_GB", "20"))      # Всего GB на машине для файлов экспорта
+MAX_EXPORT_GB = int(os.getenv("MAX_EXPORT_GB", "2"))   # Лимит одной выгрузки в GB

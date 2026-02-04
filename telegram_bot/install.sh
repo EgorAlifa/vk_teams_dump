@@ -385,6 +385,40 @@ echo -e "  CPU: ${BOT_CPU} ядер"
 echo -e "  RAM: ${BOT_RAM_MB}MB"
 echo ""
 
+#############################################
+# 5.2. Лимиты файлов экспорта
+#############################################
+echo -e "${BLUE}Настройка лимитов файлов экспорта...${NC}"
+echo ""
+
+# Автоопределение свободного места на /tmp
+AUTO_DISK=$(df -BG /tmp 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G' || echo "20")
+echo -e "${YELLOW}Свободно на /tmp сейчас: ~${AUTO_DISK} GB${NC}"
+echo -e "${YELLOW}Укажите, сколько GB на машине отдать под файлы экспорта (суммарно для всех пользователей).${NC}"
+echo -e "${YELLOW}Если уходит больше — новые выгрузки блокируются до удаления старых (автоудаление через 10 мин).${NC}"
+echo ""
+read -p "GB на машине под файлы экспорта [$AUTO_DISK]: " DISK_EXPORT_GB
+DISK_EXPORT_GB=${DISK_EXPORT_GB:-$AUTO_DISK}
+
+echo ""
+echo -e "${YELLOW}Лимит выгрузки файлов за раз для пользователя — максимум размера zip с файлами.${NC}"
+echo -e "${YELLOW}Если файлов больше — загружается ровно столько, сколько влезает в лимит.${NC}"
+echo ""
+read -p "Лимит выгрузки файлов за раз в GB [2]: " EXPORT_SIZE_GB
+EXPORT_SIZE_GB=${EXPORT_SIZE_GB:-2}
+
+# Сохраняем в .env
+sed -i '/^MAX_DISK_GB=/d' .env 2>/dev/null || true
+sed -i '/^MAX_EXPORT_GB=/d' .env 2>/dev/null || true
+echo "MAX_DISK_GB=$DISK_EXPORT_GB" >> .env
+echo "MAX_EXPORT_GB=$EXPORT_SIZE_GB" >> .env
+
+echo ""
+echo -e "${GREEN}Лимиты файлов:${NC}"
+echo -e "  Диск для экспортов: ${DISK_EXPORT_GB} GB"
+echo -e "  Лимит выгрузки:     ${EXPORT_SIZE_GB} GB"
+echo ""
+
 # Обновляем docker-compose.yml
 echo -e "${YELLOW}Обновляю docker-compose.yml с лимитами...${NC}"
 cat > docker-compose.yml << COMPOSE_EOF
