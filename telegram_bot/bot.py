@@ -1262,7 +1262,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                         # dlink из files/info -> ub.myteam.vmailru.net (резолвится)
                         file_id = orig_url.rstrip("/").split("/")[-1]
                         dlink = await client.get_file_dlink(file_id)
-                        data = await client.download_file(dlink) if dlink else None
+                        data = await client.download_file(dlink, max_size=500 * 1024 * 1024) if dlink else None
                         if not dlink:
                             print(f"📎 No dlink for {safe_name} (file_id={file_id})")
                         if data:
@@ -1456,10 +1456,15 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     # Обновляем статус экспорта пользователя для мониторинга
     update_user_export(user_id, success=not critical_error and not errors, errors=errors if errors else None)
 
+    files_text = ""
+    if files_url_map:
+        files_text = f"\n📎 Файлов в HTML: {len(files_url_map)} (ссылки доступны 10 мин)"
+
     await callback.message.answer(
         f"{'✅' if not critical_error else '⚠️'} <b>Экспорт завершён</b>\n\n"
         f"📊 Экспортировано: {len(all_exports)} из {len(selected)} чатов\n"
         f"📝 Всего сообщений: {total_msgs}"
+        f"{files_text}"
         f"{error_text}{support_text}",
         parse_mode="HTML"
     )
