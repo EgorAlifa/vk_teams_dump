@@ -1143,11 +1143,11 @@ async def _show_files_question(callback, state):
 
     await safe_edit_text(
         callback.message,
-        "📎 <b>Загружать файлы из чатов?</b>\n\n"
-        "Фото, видео и документы из переписки.\n\n"
-        "⚠️ Лимит zip: <b>2 ГБ</b>\n"
-        "Если файлов много — выгружайте по частям.\n"
-        "Файлы доступны <b>10 минут</b>.",
+        f"📎 <b>Загружать файлы из чатов?</b>\n\n"
+        f"Фото, видео и документы из переписки.\n\n"
+        f"⚠️ Лимит zip: <b>{config.MAX_EXPORT_GB} ГБ</b>\n"
+        f"Если файлов много — выгружайте по частям.\n"
+        f"Файлы доступны <b>10 минут</b>.",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
@@ -1400,15 +1400,14 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
             estimated_bytes = sum(f["size"] for f in all_files.values())
             estimated_mb = estimated_bytes / 1024 ** 2
 
-            # Проверяем свободное место
-            try:
-                st = os.statvfs("/tmp")
-                free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
-            except Exception:
-                free_gb = 0.0
+            # Проверяем лимит диска для экспортов
+            exports_used_gb = sum(
+                os.path.getsize(os.path.join(dp, f)) / 1024**3
+                for dp, _, fns in os.walk(EXPORTS_DIR) for f in fns
+            ) if os.path.isdir(EXPORTS_DIR) else 0.0
 
-            if free_gb < 5:
-                print(f"⚠️ Not enough disk space ({free_gb:.1f} GB free), skipping file downloads")
+            if exports_used_gb >= config.MAX_DISK_GB:
+                print(f"⚠️ Exports disk limit reached ({exports_used_gb:.1f} / {config.MAX_DISK_GB} GB), skipping file downloads")
             else:
                 export_uuid = str(uuid_mod.uuid4())
                 export_dir = os.path.join(EXPORTS_DIR, export_uuid)
@@ -1417,11 +1416,12 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                 total_files = len(all_files)
                 downloaded_files = 0
                 total_bytes = 0
-                MAX_EXPORT_SIZE = 2 * 1024 ** 3  # 2 GB max per export
+                MAX_EXPORT_SIZE = config.MAX_EXPORT_GB * 1024 ** 3
 
+                max_export_mb = config.MAX_EXPORT_GB * 1024
                 size_warn = ""
-                if estimated_mb > 2048:
-                    size_warn = f"\n⚠️ Оценка {estimated_mb:.0f} МБ > 2 ГБ — загрузим первые 2 ГБ"
+                if estimated_mb > max_export_mb:
+                    size_warn = f"\n⚠️ Оценка {estimated_mb:.0f} МБ > {config.MAX_EXPORT_GB} ГБ — загрузим первые {config.MAX_EXPORT_GB} ГБ"
                 dups_info = f" (пропущено {len(duplicate_url_map)} дублей)" if duplicate_url_map else ""
 
                 await safe_edit_text(
