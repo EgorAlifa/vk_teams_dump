@@ -8,7 +8,9 @@ import asyncio
 import gc
 import json
 import os
+import shutil
 import tempfile
+import uuid as uuid_mod
 import zipfile
 from datetime import datetime
 from typing import Optional
@@ -1188,6 +1190,98 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     # Считаем общее количество сообщений
     total_msgs = sum(e.get('total_messages', 0) for e in all_exports)
 
+    # Скачиваем файлы из переписок (только для HTML)
+    EXPORTS_DIR = "/tmp/vkteams_exports"
+    export_uuid = None
+    files_url_map = {}  # {original_url: local_url}
+
+    if format_type in ("html", "both") and all_exports:
+        # Собираем все уникальные файлы из filesharing
+        all_files = {}  # {original_url: {name, size, mime}}
+        for chat_export in all_exports:
+            for msg in chat_export.get("messages", []):
+                for file in msg.get("filesharing", []):
+                    url = file.get("original_url")
+                    if url and url not in all_files:
+                        all_files[url] = {
+                            "name": file.get("name", "file"),
+                            "size": file.get("size", 0),
+                            "mime": file.get("mime", ""),
+                        }
+
+        if all_files:
+            # Проверяем свободное место
+            try:
+                st = os.statvfs("/tmp")
+                free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+            except Exception:
+                free_gb = 0.0
+
+            if free_gb < 5:
+                print(f"⚠️ Not enough disk space ({free_gb:.1f} GB free), skipping file downloads")
+            else:
+                export_uuid = str(uuid_mod.uuid4())
+                export_dir = os.path.join(EXPORTS_DIR, export_uuid)
+                os.makedirs(export_dir, exist_ok=True)
+
+                total_files = len(all_files)
+                downloaded_files = 0
+                total_bytes = 0
+                MAX_EXPORT_SIZE = 2 * 1024 ** 3  # 2 GB max per export
+
+                await safe_edit_text(
+                    status_msg,
+                    f"📎 <b>Загрузка файлов</b>\n\n"
+                    f"{make_progress_bar(0, total_files)}\n\n"
+                    f"Файлов для загрузки: {total_files}",
+                    parse_mode="HTML"
+                )
+
+                for i, (orig_url, file_info) in enumerate(all_files.items()):
+                    # Проверяем лимит размера
+                    if total_bytes >= MAX_EXPORT_SIZE:
+                        print(f"📎 Export size limit reached ({total_bytes / 1024**3:.1f} GB), stopping downloads")
+                        break
+
+                    # Безопасное имя файла
+                    safe_name = file_info["name"]
+                    for ch in '/\\:*?"<>|':
+                        safe_name = safe_name.replace(ch, "_")
+                    if not safe_name:
+                        safe_name = f"file_{i}"
+
+                    # Если файл с таким именем уже есть — добавим суффикс
+                    dest_path = os.path.join(export_dir, safe_name)
+                    if os.path.exists(dest_path):
+                        base, ext = os.path.splitext(safe_name)
+                        safe_name = f"{base}_{i}{ext}"
+                        dest_path = os.path.join(export_dir, safe_name)
+
+                    try:
+                        data = await client.download_file(orig_url)
+                        if data:
+                            with open(dest_path, "wb") as f:
+                                f.write(data)
+                            total_bytes += len(data)
+                            downloaded_files += 1
+                            files_url_map[orig_url] = f"{config.PUBLIC_URL}/files/{export_uuid}/{safe_name}"
+                    except Exception as e:
+                        print(f"📎 Error downloading {safe_name}: {e}")
+
+                    # Обновляем статус каждые 5 файлов
+                    if (i + 1) % 5 == 0 or i == total_files - 1:
+                        await safe_edit_text(
+                            status_msg,
+                            f"📎 <b>Загрузка файлов</b>\n\n"
+                            f"{make_progress_bar(i + 1, total_files)}\n\n"
+                            f"Загружено: {downloaded_files}/{total_files} ({total_bytes / 1024**2:.1f} MB)",
+                            parse_mode="HTML"
+                        )
+
+                    await asyncio.sleep(0.3)
+
+                print(f"📎 Files downloaded: {downloaded_files}/{total_files}, {total_bytes / 1024**2:.1f} MB total")
+
     # Формируем итоговый экспорт (даже при ошибках — отдаём что собрали)
     final_export = {
         "export_date": datetime.now().isoformat(),
@@ -1232,6 +1326,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     f"📊 Чатов: {len(all_exports)}\n"
                     f"📝 Сообщений: {total_msgs}\n"
                     f"📷 Аватарок: {len(avatars)}\n"
+                    f"📎 Файлов: {len(files_url_map)}\n"
                     f"👤 Контактов: {len(names)}\n\n"
                     f"Это может занять время для больших экспортов",
                     parse_mode="HTML"
@@ -1239,7 +1334,7 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 
                 try:
                     print(f"📝 Generating HTML for {len(all_exports)} chats, {total_msgs} messages...")
-                    html_content = format_as_html(final_export, avatars=avatars, names=names)
+                    html_content = format_as_html(final_export, avatars=avatars, names=names, files_url_map=files_url_map)
                     print(f"✅ HTML generated: {len(html_content)} bytes")
                 except Exception as html_err:
                     print(f"❌ HTML generation error: {html_err}")

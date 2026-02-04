@@ -19,3 +19,7 @@ VKTEAMS_AUTH_BASE = os.getenv("VKTEAMS_AUTH_BASE", "https://u.myteam.vmailru.net
 MESSAGES_PER_REQUEST = 900  # Максимум ~1000, используем 900 для надёжности
 DELAY_BETWEEN_REQUESTS = 0.3  # Уменьшено с 0.5 благодаря connection pooling
 MAX_FILE_SIZE_MB = 50  # Лимит Telegram для файлов
+
+# URL для раздачи файлов экспорта (без trailing slash)
+# Пример: http://89.208.231.122:8080
+PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8080")

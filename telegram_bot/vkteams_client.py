@@ -646,6 +646,58 @@ class VKTeamsClient:
         logger.debug(f"Avatar for {sn}: all attempts failed, returning None")
         return None
 
+    async def get_file_dlink(self, file_id: str) -> str | None:
+        """Get download URL (dlink) for a file via files/info API"""
+        url = f"https://u.myteam.vmailru.net/api/v139/files/info/{file_id}/?aimsid={self.session.aimsid}"
+        headers = {
+            "Origin": "https://myteam.mail.ru",
+            "Referer": "https://myteam.mail.ru/",
+            "x-teams-aimsid": self.session.aimsid,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        http = self._get_http_session()
+        try:
+            async with http.get(url, headers=headers, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("result", {}).get("info", {}).get("dlink")
+        except Exception as e:
+            logger.debug(f"get_file_dlink error for {file_id}: {e}")
+        return None
+
+    async def download_file(self, url: str, max_size: int = 50 * 1024 * 1024) -> bytes | None:
+        """Download file by URL. Returns bytes or None on error.
+        max_size: reject files larger than this (default 50 MB)
+        """
+        headers = {
+            "Origin": "https://myteam.mail.ru",
+            "Referer": "https://myteam.mail.ru/",
+            "x-teams-aimsid": self.session.aimsid,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        http = self._get_http_session()
+        try:
+            async with http.get(url, headers=headers, timeout=60) as response:
+                if response.status != 200:
+                    logger.debug(f"download_file: status {response.status} for {url[:80]}")
+                    return None
+                # Check content-length if available
+                content_length = response.headers.get("Content-Length")
+                if content_length and int(content_length) > max_size:
+                    logger.info(f"download_file: file too large ({content_length} bytes), skipping")
+                    return None
+                data = await response.read()
+                if len(data) > max_size:
+                    logger.info(f"download_file: downloaded file too large ({len(data)} bytes), discarding")
+                    return None
+                return data
+        except asyncio.TimeoutError:
+            logger.debug(f"download_file: timeout for {url[:80]}")
+            return None
+        except Exception as e:
+            logger.debug(f"download_file: error for {url[:80]}: {e}")
+            return None
+
     async def get_avatars_batch(self, sns: list[str], size: str = "small") -> dict[str, bytes]:
         """
         Download avatars for multiple users/chats.
