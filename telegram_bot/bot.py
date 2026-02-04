@@ -1148,7 +1148,8 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
                     # Это не ошибка - просто нет диалога с контактом
                     no_dialogs.append(sn)
                 elif "'code': 40300" in err_str or "Permission denied" in err_str or \
-                     "'code': 40401" in err_str or "Group not found" in err_str:
+                     "'code': 40401" in err_str or "Group not found" in err_str or \
+                     "no such member" in err_str:
                     # Нет доступа к чату (заблокирован, удалён, удалённая группа, или служебный чат)
                     no_access.append(sn)
                 else:
