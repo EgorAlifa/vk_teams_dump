@@ -1197,6 +1197,15 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
     files_zip_url = ""
     files_zip_size_mb = 0.0
 
+    # Очистка старых экспортов (>10 мин) перед новой загрузкой
+    if os.path.exists(EXPORTS_DIR):
+        now_ts = datetime.now().timestamp()
+        for entry in os.listdir(EXPORTS_DIR):
+            entry_path = os.path.join(EXPORTS_DIR, entry)
+            if os.path.isdir(entry_path) and now_ts - os.path.getmtime(entry_path) > 600:
+                shutil.rmtree(entry_path, ignore_errors=True)
+                print(f"📎 Cleaned up old export: {entry}")
+
     if format_type in ("html", "both") and all_exports:
         # Собираем все уникальные файлы из filesharing
         all_files = {}  # {original_url: {name, size, mime}}
@@ -1296,13 +1305,21 @@ async def process_export(callback: CallbackQuery, state: FSMContext):
 
                 # Собираем zip из скачанных файлов
                 if downloaded_files > 0:
-                    zip_path = os.path.join(export_dir, "_files.zip")
-                    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
-                        for fname in sorted(os.listdir(export_dir)):
-                            zf.write(os.path.join(export_dir, fname), fname)
-                    files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
-                    files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
-                    print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
+                    try:
+                        st = os.statvfs(export_dir)
+                        free_bytes = st.f_bavail * st.f_frsize
+                        if free_bytes < total_bytes + 100 * 1024 * 1024:
+                            print(f"📎 Not enough space for zip ({free_bytes / 1024**2:.0f} MB free, need {total_bytes / 1024**2:.0f} MB)")
+                        else:
+                            zip_path = os.path.join(export_dir, "_files.zip")
+                            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
+                                for fname in sorted(os.listdir(export_dir)):
+                                    zf.write(os.path.join(export_dir, fname), fname)
+                            files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
+                            files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
+                            print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
+                    except Exception as e:
+                        print(f"📎 Zip creation failed: {e}")
 
     # Формируем итоговый экспорт (даже при ошибках — отдаём что собрали)
     final_export = {
