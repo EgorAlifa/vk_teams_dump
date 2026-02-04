@@ -76,6 +76,7 @@ user_search_query: dict[int, str] = {}  # Поисковый запрос
 user_message_ids: dict[int, dict] = {}  # ID сообщений для удаления (code_msg, chats_msg)
 user_active_exports: dict[int, dict] = {}  # {user_id: {"uuid", "path", "created_at"}} — блокировка повторных выгрузок с файлами
 _files_enabled: bool = True  # Глобальный флаг: файлы доступны всем (загружен из DB при старте)
+_pending_broadcasts: dict[int, str] = {}  # {admin_user_id: broadcast_text} — ожидающие подтверждения
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     """Создать текстовый прогресс-бар"""
@@ -1767,8 +1768,6 @@ async def cmd_maintenance(message: Message):
         await message.answer("❌ Эта команда доступна только администраторам.")
         return
 
-    status_msg = await message.answer("⏳ Отправляю уведомления...")
-
     broadcast_text = (
         "⚠️ <b>Технические работы</b>\n\n"
         "Планируются технические работы.\n"
@@ -1777,13 +1776,20 @@ async def cmd_maintenance(message: Message):
         f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
     )
 
-    sent, failed = await broadcast_message(message.bot, broadcast_text, exclude_user_id=message.from_user.id)
+    _pending_broadcasts[message.from_user.id] = broadcast_text
 
-    await safe_edit_text(
-        status_msg,
-        f"✅ <b>Уведомление отправлено</b>\n\n"
-        f"📨 Успешно: {sent}\n"
-        f"❌ Не доставлено: {failed}",
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить", callback_data="broadcast:send")
+    builder.button(text="❌ Отмена", callback_data="broadcast:cancel")
+    builder.adjust(2)
+
+    await message.answer(
+        f"📋 <b>Предпросмотр рассылки:</b>\n\n"
+        f"<code>---</code>\n"
+        f"{broadcast_text}\n"
+        f"<code>---</code>\n\n"
+        f"Подтвердите отправку всем пользователям.",
+        reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
 
@@ -1803,7 +1809,6 @@ async def cmd_announce_update(message: Message):
     custom_text = message.text.replace("/announce_update", "").strip() if message.text else ""
 
     if custom_text:
-        # Используем пользовательский текст
         broadcast_text = (
             "🆕 <b>Обновление бота</b>\n\n"
             f"{custom_text}\n\n"
@@ -1811,7 +1816,6 @@ async def cmd_announce_update(message: Message):
             f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
         )
     else:
-        # Дефолтный текст
         broadcast_text = (
             "🆕 <b>Обновление бота</b>\n\n"
             "В боте появились новые функции и улучшения!\n\n"
@@ -1819,12 +1823,53 @@ async def cmd_announce_update(message: Message):
             f"По вопросам: <code>{SUPPORT_CONTACT}</code>"
         )
 
-    status_msg = await message.answer("⏳ Отправляю уведомления...")
+    _pending_broadcasts[message.from_user.id] = broadcast_text
 
-    sent, failed = await broadcast_message(message.bot, broadcast_text, exclude_user_id=message.from_user.id)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить", callback_data="broadcast:send")
+    builder.button(text="❌ Отмена", callback_data="broadcast:cancel")
+    builder.adjust(2)
 
-    await safe_edit_text(
-        status_msg,
+    await message.answer(
+        f"📋 <b>Предпросмотр рассылки:</b>\n\n"
+        f"<code>---</code>\n"
+        f"{broadcast_text}\n"
+        f"<code>---</code>\n\n"
+        f"Подтвердите отправку всем пользователям.",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("broadcast:"))
+async def handle_broadcast_confirm(callback: CallbackQuery):
+    """Подтверждение или отмена рассылки"""
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("❌ Доступно только администраторам.", show_alert=True)
+        return
+
+    action = callback.data.split(":")[1]  # send / cancel
+    broadcast_text = _pending_broadcasts.pop(callback.from_user.id, None)
+
+    if action == "cancel" or broadcast_text is None:
+        await callback.answer()
+        await callback.message.edit_text(
+            "🚫 <b>Рассылка отменена.</b>",
+            parse_mode="HTML"
+        )
+        return
+
+    # Подтверждение — отправляем
+    await callback.answer()
+    await callback.message.edit_text(
+        "⏳ <b>Отправляю уведомления...</b>",
+        parse_mode="HTML"
+    )
+
+    sent, failed = await broadcast_message(callback.bot, broadcast_text, exclude_user_id=callback.from_user.id)
+    log_event("broadcast_sent", callback.from_user.id, data=f"sent={sent} failed={failed}")
+
+    await callback.message.edit_text(
         f"✅ <b>Уведомление отправлено</b>\n\n"
         f"📨 Успешно: {sent}\n"
         f"❌ Не доставлено: {failed}",
