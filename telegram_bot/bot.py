@@ -1352,7 +1352,7 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                 f"Загружено: {current_downloaded} из {total_avatars_to_download}",
                 parse_mode="HTML"
             )
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(10.0)
 
         if avatar_task.done():
             print(f"📷 Background download complete: {len(avatars)} avatars total")
@@ -1514,7 +1514,7 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                 for coro in asyncio.as_completed(tasks):
                     await coro
                     completed += 1
-                    if completed % 10 == 0 or completed == total_files:
+                    if completed % 50 == 0 or completed == total_files:
                         await safe_edit_text(
                             status_msg,
                             f"📎 <b>Загрузка файлов</b>\n\n"
