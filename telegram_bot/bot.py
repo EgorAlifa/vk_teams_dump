@@ -1493,7 +1493,7 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                 for coro in asyncio.as_completed(tasks):
                     await coro
                     completed += 1
-                    if completed % 5 == 0 or completed == total_files:
+                    if completed % 10 == 0 or completed == total_files:
                         await safe_edit_text(
                             status_msg,
                             f"📎 <b>Загрузка файлов</b>\n\n"
