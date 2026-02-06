@@ -1033,7 +1033,7 @@ async def ask_export_format(callback: CallbackQuery, state: FSMContext):
     builder.button(text="🌐 HTML (для чтения)", callback_data="format:html")
     builder.button(text="📦 Оба формата", callback_data="format:both")
     if _files_enabled:
-        builder.button(text="📎 Только файлы (zip)", callback_data="format:files_only")
+        builder.button(text="📎 Только файлы из чатов (zip)", callback_data="format:files_only")
     builder.adjust(1)
 
     avatars_text = "с аватарками" if avatars_choice == "yes" else "без аватарок"
@@ -1526,7 +1526,7 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
                                         full_path = os.path.join(dirpath, fname)
                                         arcname = os.path.relpath(full_path, export_dir)
                                         zf.write(full_path, arcname)
-                            files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/_files.zip"
+                            files_zip_url = f"{config.PUBLIC_URL}/files/{export_uuid}/download"
                             files_zip_size_mb = os.path.getsize(zip_path) / 1024**2
                             print(f"📎 Created _files.zip: {files_zip_size_mb:.1f} MB")
                             # Запоминаем для блокировки повторной выгрузки с файлами

@@ -71,6 +71,8 @@ class StatsHandler(BaseHTTPRequestHandler):
                 self.send_html()
             elif self.path == "/health":
                 self.send_json({"status": "ok"})
+            elif self.path.startswith("/files/") and "/download" in self.path:
+                self.serve_download_page()
             elif self.path.startswith("/files/"):
                 self.serve_export_file()
             else:
@@ -161,6 +163,157 @@ class StatsHandler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
         except Exception as e:
             print(f"ERROR serving file {real_path}: {e}")
+
+    def serve_download_page(self):
+        """HTML-страница для скачивания файлов с автозагрузкой"""
+        # path = /files/{uuid}/download
+        path = self.path.split("?")[0]
+        parts = path.split("/")
+        if len(parts) < 4:
+            self.send_error(404)
+            return
+
+        uuid = parts[2]
+        # Защита от path traversal
+        if ".." in uuid or uuid.startswith("/"):
+            self.send_error(403)
+            return
+
+        file_path = os.path.join(EXPORTS_DIR, uuid, "_files.zip")
+        real_path = os.path.realpath(file_path)
+        if not real_path.startswith(os.path.realpath(EXPORTS_DIR)):
+            self.send_error(403)
+            return
+
+        if not os.path.isfile(real_path):
+            self.send_error(404)
+            return
+
+        file_size = os.path.getsize(real_path)
+        file_size_mb = file_size / 1024 / 1024
+
+        download_url = f"/files/{uuid}/_files.zip"
+        html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Скачивание файлов экспорта</title>
+    <meta http-equiv="refresh" content="2;url={download_url}">
+    <style>
+        :root {{
+            --bg: #0a0a0f;
+            --card: #1a1a24;
+            --text: #e4e4e7;
+            --text2: #71717a;
+            --accent: #6366f1;
+            --green: #22c55e;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }}
+        .container {{
+            background: var(--card);
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+        }}
+        .icon {{
+            font-size: 64px;
+            margin-bottom: 20px;
+            animation: pulse 2s ease-in-out infinite;
+        }}
+        @keyframes pulse {{
+            0%, 100% {{ opacity: 1; transform: scale(1); }}
+            50% {{ opacity: 0.7; transform: scale(0.95); }}
+        }}
+        h1 {{
+            font-size: 24px;
+            margin-bottom: 12px;
+            color: var(--text);
+        }}
+        .info {{
+            color: var(--text2);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }}
+        .size {{
+            display: inline-block;
+            background: rgba(99,102,241,0.1);
+            color: var(--accent);
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin: 16px 0;
+            font-weight: 600;
+        }}
+        .btn {{
+            display: inline-block;
+            background: var(--accent);
+            color: white;
+            padding: 14px 32px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            margin-top: 16px;
+            transition: all 0.2s;
+        }}
+        .btn:hover {{
+            background: #5558e3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(99,102,241,0.4);
+        }}
+        .status {{
+            color: var(--green);
+            margin-top: 12px;
+            font-size: 14px;
+        }}
+    </style>
+    <script>
+        let countdown = 2;
+        function updateCountdown() {{
+            const el = document.getElementById('countdown');
+            if (el) el.textContent = countdown;
+            countdown--;
+            if (countdown < 0) {{
+                document.getElementById('status').textContent = '✓ Загрузка началась';
+            }}
+        }}
+        setInterval(updateCountdown, 1000);
+        updateCountdown();
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">📦</div>
+        <h1>Скачивание файлов экспорта</h1>
+        <div class="info">
+            Архив с файлами из выбранных чатов VK Teams
+        </div>
+        <div class="size">📊 Размер: {file_size_mb:.1f} МБ</div>
+        <div class="status" id="status">⏳ Загрузка начнется через <span id="countdown">2</span> сек...</div>
+        <a href="{download_url}" class="btn">↓ Скачать сейчас</a>
+    </div>
+</body>
+</html>"""
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(html.encode())
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass
 
     def log_message(self, format, *args):
         # Log important messages
