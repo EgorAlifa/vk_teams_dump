@@ -9,7 +9,7 @@ import shutil
 import threading
 import time
 import mimetypes
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from stats import get_stats, save_metrics, get_metrics_history
 
 PORT = int(os.environ.get("STATS_PORT", 8080))
@@ -1035,10 +1035,10 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Failed to save initial metrics: {e}")
 
-        # Создаём и запускаем сервер
+        # Создаём и запускаем сервер (многопоточный для параллельной раздачи файлов)
         print(f"Creating HTTP server on port {PORT}...")
-        server = HTTPServer(("0.0.0.0", PORT), StatsHandler)
-        print(f"Stats server running on http://0.0.0.0:{PORT}")
+        server = ThreadingHTTPServer(("0.0.0.0", PORT), StatsHandler)
+        print(f"Stats server running on http://0.0.0.0:{PORT} (multi-threaded)")
         print("Waiting for connections...")
         server.serve_forever()
     except Exception as e:
