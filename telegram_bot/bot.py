@@ -340,6 +340,9 @@ async def cmd_logout(message: Message, state: FSMContext):
 @router.callback_query(F.data == "do_logout")
 async def handle_logout(callback: CallbackQuery, state: FSMContext):
     """Обработка кнопки логаута"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     session = user_sessions.get(callback.from_user.id)
     email = session.email if session else "?"
 
@@ -360,16 +363,17 @@ async def handle_logout(callback: CallbackQuery, state: FSMContext):
         f"Теперь введите /auth для входа под другой УЗ",
         parse_mode="HTML"
     )
-    await callback.answer("Вы вышли")
 
 
 @router.callback_query(F.data == "go_to_chats")
 async def handle_go_to_chats(callback: CallbackQuery, state: FSMContext):
     """Перейти к чатам из меню авторизации"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     await callback.message.delete()
     # Создаём фейковое сообщение для вызова cmd_chats
     await cmd_chats(callback.message, state)
-    await callback.answer()
 
 
 @router.message(AuthStates.waiting_email)
@@ -642,6 +646,9 @@ def build_chats_keyboard(
 @router.callback_query(F.data.startswith("page:"))
 async def handle_pagination(callback: CallbackQuery, state: FSMContext):
     """Переключение страниц"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     parts = callback.data.split(":")
     mode = parts[1]  # groups, private или hidden
     page = int(parts[2])
@@ -665,12 +672,14 @@ async def handle_pagination(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=keyboard)
     except Exception:
         pass
-    await callback.answer()
 
 
 @router.callback_query(F.data == "show_private")
 async def show_private_chats(callback: CallbackQuery, state: FSMContext):
     """Показать личные чаты"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     data = await state.get_data()
     private = data.get("private", [])
     hidden = data.get("hidden", [])
@@ -698,12 +707,14 @@ async def show_private_chats(callback: CallbackQuery, state: FSMContext):
         )
     except Exception:
         pass
-    await callback.answer()
 
 
 @router.callback_query(F.data == "show_groups")
 async def show_group_chats(callback: CallbackQuery, state: FSMContext):
     """Показать групповые чаты"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     data = await state.get_data()
     groups = data.get("groups", [])
     private = data.get("private", [])
@@ -728,12 +739,14 @@ async def show_group_chats(callback: CallbackQuery, state: FSMContext):
         )
     except Exception:
         pass
-    await callback.answer()
 
 
 @router.callback_query(F.data == "show_hidden")
 async def show_hidden_chats(callback: CallbackQuery, state: FSMContext):
     """Показать скрытые чаты (ДР, свадьба, поздравления)"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     data = await state.get_data()
     hidden = data.get("hidden", [])
     selected = user_selected_chats.get(callback.from_user.id, [])
@@ -755,7 +768,6 @@ async def show_hidden_chats(callback: CallbackQuery, state: FSMContext):
         )
     except Exception:
         pass
-    await callback.answer()
 
 
 @router.callback_query(F.data == "noop")
@@ -767,6 +779,9 @@ async def handle_noop(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("select:"))
 async def toggle_chat_selection(callback: CallbackQuery, state: FSMContext):
     """Выбор/отмена выбора чата"""
+    # Отвечаем на callback сразу, чтобы не истек timeout
+    await callback.answer()
+
     sn = callback.data.split(":", 1)[1]
     user_id = callback.from_user.id
 
@@ -801,12 +816,13 @@ async def toggle_chat_selection(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
-    await callback.answer()
-
 
 @router.callback_query(F.data.startswith("select_all:"))
 async def select_all_current(callback: CallbackQuery, state: FSMContext):
     """Выбрать все чаты текущего типа"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     mode = callback.data.split(":")[1]
     data = await state.get_data()
     user_id = callback.from_user.id
@@ -844,12 +860,14 @@ async def select_all_current(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=keyboard)
     except Exception:
         pass
-    await callback.answer(f"✅ Выбрано {len(selected)} чатов")
 
 
 @router.callback_query(F.data == "clear_selection")
 async def clear_selection(callback: CallbackQuery, state: FSMContext):
     """Сбросить выбор"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     data = await state.get_data()
     user_id = callback.from_user.id
     mode = data.get("current_mode", "groups")
@@ -871,7 +889,6 @@ async def clear_selection(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=keyboard)
     except Exception:
         pass
-    await callback.answer("❌ Выбор сброшен")
 
 
 @router.callback_query(F.data == "start_search")
@@ -905,6 +922,9 @@ async def cancel_search(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "clear_search")
 async def clear_search(callback: CallbackQuery, state: FSMContext):
     """Сбросить поисковый фильтр"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     user_id = callback.from_user.id
     user_search_query[user_id] = ""
 
@@ -927,7 +947,6 @@ async def clear_search(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=keyboard)
     except Exception:
         pass
-    await callback.answer("🔍 Поиск сброшен")
 
 
 @router.message(ExportStates.searching)
@@ -1018,14 +1037,15 @@ async def do_export(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("avatars:"))
 async def ask_export_format(callback: CallbackQuery, state: FSMContext):
     """Спросить формат экспорта после выбора аватарок"""
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     avatars_choice = callback.data.split(":")[1]  # yes или no
     user_id = callback.from_user.id
     selected = user_selected_chats.get(user_id, [])
 
     # Сохраняем выбор в state
     await state.update_data(with_avatars=(avatars_choice == "yes"))
-
-    await callback.answer()
 
     # Спрашиваем формат
     builder = InlineKeyboardBuilder()
@@ -1187,10 +1207,11 @@ async def handle_delete_files(callback: CallbackQuery):
     req_uuid = callback.data.split(":")[1]
     active = user_active_exports.get(user_id)
     if active and active["uuid"] == req_uuid:
+        # Отвечаем сразу, до удаления файлов
+        await callback.answer()
         shutil.rmtree(active["path"], ignore_errors=True)
         user_active_exports.pop(user_id, None)
         await safe_edit_reply_markup(callback.message, reply_markup=None)
-        await callback.answer("🗑️ Файлы удалены")
     else:
         await callback.answer("Файлы уже удалены", show_alert=True)
 
@@ -1980,6 +2001,9 @@ async def handle_admin_toggle(callback: CallbackQuery):
         await callback.answer("❌ Доступно только администраторам.", show_alert=True)
         return
 
+    # Отвечаем на callback сразу
+    await callback.answer()
+
     global _files_enabled, _files_auto_reenable_at
     action = callback.data.split(":")[1]  # files_on / files_off
 
@@ -1993,8 +2017,6 @@ async def handle_admin_toggle(callback: CallbackQuery):
         _files_enabled = False
         set_setting("files_enabled", "0")
         log_event("admin_files_off", callback.from_user.id)
-
-    await callback.answer()
 
     builder = InlineKeyboardBuilder()
     if _files_enabled:
