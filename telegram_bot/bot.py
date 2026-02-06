@@ -1714,7 +1714,8 @@ async def do_actual_export(callback: CallbackQuery, state: FSMContext):
             files_text = (
                 f'\n📎 Файлов: {len(files_url_map)} → '
                 f'<a href="{files_zip_url}">скачать zip ({files_zip_size_mb:.1f} МБ)</a>\n'
-                f'⏰ Ссылка на файлы доступна 10 минут'
+                f'⏰ Ссылка на файлы доступна 10 минут\n'
+                f'⚠️ <b>Важно:</b> выгрузка файлов работает только из РФ. Если у вас VPN — отключите его перед скачиванием.'
             )
             files_keyboard = InlineKeyboardBuilder()
             files_keyboard.button(text="🗑️ Удалить файлы", callback_data=f"delete_files:{export_uuid}")
