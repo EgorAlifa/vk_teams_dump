@@ -379,6 +379,10 @@ async def handle_go_to_chats(callback: CallbackQuery, state: FSMContext):
 @router.message(AuthStates.waiting_email)
 async def process_email(message: Message, state: FSMContext):
     """Обработка email — отправка кода"""
+    if not message.text:
+        await message.answer("❌ Пожалуйста, отправьте email текстом (не стикер, не фото).")
+        return
+
     email = message.text.strip().lower()
 
     # Валидация email
@@ -421,6 +425,10 @@ async def process_email(message: Message, state: FSMContext):
 @router.message(AuthStates.waiting_code)
 async def process_code(message: Message, state: FSMContext):
     """Обработка кода — получение сессии"""
+    if not message.text:
+        await message.answer("❌ Пожалуйста, отправьте код текстом (не стикер, не фото).")
+        return
+
     code = message.text.strip()
     data = await state.get_data()
     email = data.get("auth_email")
@@ -952,6 +960,10 @@ async def clear_search(callback: CallbackQuery, state: FSMContext):
 @router.message(ExportStates.searching)
 async def process_search_query(message: Message, state: FSMContext):
     """Обработка поискового запроса"""
+    if not message.text:
+        await message.answer("❌ Пожалуйста, отправьте текст для поиска (не стикер, не фото).")
+        return
+
     user_id = message.from_user.id
     search_query = message.text.strip()
 
