@@ -126,7 +126,22 @@ class VKTeamsClient:
                     raise last_error
 
                 if status.get("code") != 20000:
-                    logger.error(f"API error: {status}")
+                    # Некоторые ошибки - это нормальные ситуации (удаленные чаты, недоступные группы)
+                    error_code = status.get("code")
+                    error_reason = status.get("reason", "")
+
+                    # Список "нормальных" ошибок, которые не требуют ERROR логирования
+                    expected_errors = [40401, 40300, 40004]  # Group not found, Permission denied, etc
+                    is_expected = error_code in expected_errors or \
+                                  "Group not found" in error_reason or \
+                                  "Permission denied" in error_reason or \
+                                  "No such dialogue" in error_reason
+
+                    if is_expected:
+                        logger.debug(f"API expected error: {status}")
+                    else:
+                        logger.error(f"API error: {status}")
+
                     raise Exception(f"API Error: {status}")
 
                 return data.get("results", {})
